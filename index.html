@@ -165,6 +165,17 @@ svg.chart{width:100%;display:block;overflow:visible}
 .statgrid .st{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 .statgrid .st .k{color:var(--faint);font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase}
 .statgrid .st .v{font-family:var(--mono);font-size:14px;font-weight:700;margin-top:2px}
+.ai-keyrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px}
+.ai-keyrow input{flex:1 1 240px;min-width:0}
+.ai-keyrow .note{flex-basis:100%;margin-top:2px}
+.ai-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ai-out{margin-top:14px;line-height:1.55;font-size:14px}
+.ai-out:empty{display:none}
+.ai-out h4{font-size:14px;font-weight:700;margin:14px 0 4px;color:var(--txt)}
+.ai-out ul{margin:4px 0 4px 18px;padding:0}
+.ai-out li{margin:3px 0}
+.ai-out p{margin:6px 0}
+.ai-out b{color:var(--txt)}
 .gridline{stroke:var(--line);stroke-width:1}
 .crosshair{stroke:var(--faint);stroke-width:1;stroke-dasharray:3 3;pointer-events:none}
 .axislbl{fill:var(--faint);font-family:var(--mono);font-size:10px}
@@ -355,6 +366,21 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
         <div class="chartwrap"><svg class="chart" id="dowChart" viewBox="0 0 360 260"></svg>
           <div class="tip" id="dowTip"></div></div>
       </div>
+    </div>
+
+    <div class="panel">
+      <h3>AI Trade Analysis <span class="hint">Google Gemini · free</span></h3>
+      <div id="aiKeyRow" class="ai-keyrow">
+        <input type="password" id="aiKey" placeholder="Paste your Google AI Studio API key" autocomplete="off">
+        <button class="iconbtn" id="aiSaveKey">Save key</button>
+        <span class="note">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Stored only in this browser — never uploaded. Your trade data is sent to Google to generate the analysis.</span>
+      </div>
+      <div class="ai-controls">
+        <button class="iconbtn" id="aiAnalyze">✦ Analyze my trades</button>
+        <button class="iconbtn" id="aiChangeKey" style="display:none">change key</button>
+        <span class="mut" id="aiStatus"></span>
+      </div>
+      <div class="ai-out" id="aiOut"></div>
     </div>
   </section>
 
@@ -919,6 +945,7 @@ function fmtDte(n){if(n==null)return '<span class="mut">—</span>';
 
 /* ============================ FILTERS ============================ */
 let instF="all",fromD="",toD="";
+let dashData=null;   // last computed dashboard aggregates, reused by the AI analyzer
 function filteredTrades(){
   return state.trades.filter(t=>{
     if(instF!=="all"&&t.instrument!==instF)return false;
@@ -974,6 +1001,8 @@ function renderDash(){
   drawCalendar(allRealized.concat(propEvents));
   drawHistogram(allRealized);
   drawDayOfWeek(allRealized.concat(propEvents));
+  dashData={allRealized,allPos,propEvents,totalReal,totalUn,unKnown,winRate,avgWin,avgLoss,wins:wins.length,losses:losses.length,
+    from:fromD||null,to:toD||null,instrument:instF};
 }
 const fmtSignedColored=n=>`${n>=0?"+":"−"}$${Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 
@@ -1357,6 +1386,108 @@ function drawDayOfWeek(events){
     b.addEventListener("mouseleave",()=>tip.style.opacity=0);
     b.addEventListener("touchstart",ev=>{const t=ev.touches[0];show(b,t.clientX,t.clientY);clearTimeout(tip._t);tip._t=setTimeout(()=>tip.style.opacity=0,2600);ev.preventDefault();},{passive:false});
   });
+}
+
+/* ============================ AI ANALYSIS (Google Gemini) ============================ */
+const AI_KEY_LS="ai_gemini_key";
+const AI_MODEL="gemini-2.5-flash";
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function aiGetKey(){try{return localStorage.getItem(AI_KEY_LS)||"";}catch(e){return "";}}
+function aiSetKey(k){try{if(k)localStorage.setItem(AI_KEY_LS,k);else localStorage.removeItem(AI_KEY_LS);}catch(e){}}
+function aiUpdateUI(){
+  const has=!!aiGetKey(),kr=$("#aiKeyRow"),ck=$("#aiChangeKey"),an=$("#aiAnalyze");
+  if(!kr)return;
+  kr.style.display=has?"none":"";ck.style.display=has?"":"none";an.disabled=!has;
+}
+// tiny, safe markdown → HTML (escapes first, then a few inline/block rules)
+function aiMarkdown(md){
+  const lines=String(md).replace(/\r/g,"").split("\n");let html="",inList=false;
+  const inline=t=>esc(t).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>").replace(/(?<!\*)\*(?!\*)(.+?)\*(?!\*)/g,"<i>$1</i>");
+  const closeList=()=>{if(inList){html+="</ul>";inList=false;}};
+  for(let raw of lines){const line=raw.trim();
+    if(!line){closeList();continue;}
+    let m;
+    if((m=line.match(/^#{1,6}\s+(.*)$/))){closeList();html+=`<h4>${inline(m[1])}</h4>`;}
+    else if((m=line.match(/^[-*•]\s+(.*)$/))){if(!inList){html+="<ul>";inList=true;}html+=`<li>${inline(m[1])}</li>`;}
+    else if((m=line.match(/^\d+\.\s+(.*)$/))){if(!inList){html+="<ul>";inList=true;}html+=`<li>${inline(m[1])}</li>`;}
+    else{closeList();html+=`<p>${inline(line)}</p>`;}
+  }
+  closeList();return html;
+}
+function aiBuildPayload(d){
+  const m2=v=>Math.round(v*100)/100;
+  const realized=d.allRealized;
+  const ev=realized.concat(d.propEvents);
+  const grossW=realized.filter(r=>r.pnl>0).reduce((s,r)=>s+r.pnl,0);
+  const grossL=Math.abs(realized.filter(r=>r.pnl<0).reduce((s,r)=>s+r.pnl,0));
+  const agg=(arr,key)=>{const o={};for(const r of arr){const k=r[key]||"?";o[k]=(o[k]||0)+r.pnl;}return o;};
+  // monthly + drawdown from sorted cumulative
+  const sorted=ev.slice().sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  let cum=0,peak=-Infinity,maxDD=0;const monthly={};
+  for(const e of sorted){cum+=e.pnl;peak=Math.max(peak,cum);maxDD=Math.min(maxDD,cum-peak);
+    const mo=String(e.date).slice(0,7);monthly[mo]=(monthly[mo]||0)+e.pnl;}
+  const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"],dow={};
+  for(const e of ev){const[y,mm,dd]=String(e.date).slice(0,10).split("-").map(Number);if(y){const w=DOW[new Date(y,mm-1,dd).getDay()];dow[w]=(dow[w]||0)+e.pnl;}}
+  const round=o=>{const r={};for(const k in o)r[k]=m2(o[k]);return r;};
+  return {
+    filters:{instrument:d.instrument,from:d.from,to:d.to},
+    overall:{realizedPnL:m2(d.totalReal),unrealizedPnL:d.unKnown?m2(d.totalUn):null,
+      closedTrades:realized.length,openPositions:d.allPos.length,
+      wins:d.wins,losses:d.losses,winRatePct:m2(d.winRate),
+      avgWin:m2(d.avgWin),avgLoss:m2(d.avgLoss),
+      profitFactor:grossL?m2(grossW/grossL):null,
+      expectancyPerTrade:realized.length?m2(ev.reduce((s,e)=>s+e.pnl,0)/realized.length):null,
+      maxDrawdown:m2(maxDD)},
+    pnlByInstrument:round(agg(realized,"instrument")),
+    pnlByTicker:round(agg(realized,"symbol")),
+    pnlByDayOfWeek:round(dow),
+    pnlByMonth:round(monthly),
+    openPositions:d.allPos.map(p=>({symbol:p.symbol,instrument:p.instrument,qty:m2(p.qty||0),unrealized:p.unrealized==null?null:m2(p.unrealized)})),
+    closedTrades:realized.map(r=>({date:r.date,symbol:r.symbol,instrument:r.instrument,
+      qty:m2(r.qty||0),dir:r.dir===1?"long":r.dir===-1?"short":(r.type||null),
+      open:r.openPrice!=null?m2(r.openPrice):null,close:r.closePrice!=null?m2(r.closePrice):null,
+      pnl:m2(r.pnl)}))
+  };
+}
+function aiBuildPrompt(d){
+  const data=aiBuildPayload(d);
+  return `You are a sharp, candid trading coach reviewing one trader's journal. Analyze the data below and give specific, actionable feedback — not generic platitudes.
+
+Cover, with concrete numbers from the data:
+1. Overall performance read (is this trader net profitable, and is it sustainable given win rate vs avg win/loss and profit factor?).
+2. Biggest strengths — which instruments, tickers, or days are working.
+3. Biggest leaks — where losses concentrate (tickers, instruments, days of week, position sizing, holding losers).
+4. Risk: comment on max drawdown and any signs of oversized losers or revenge trading visible in the closed-trade sequence.
+5. 3-5 concrete, prioritized suggestions.
+
+Be concise. Use short markdown sections with **bold** headers and bullet points. All P&L figures are in USD. Do not invent data not present.
+
+DATA (JSON):
+${JSON.stringify(data)}`;
+}
+async function aiAnalyze(){
+  const key=aiGetKey();if(!key){aiUpdateUI();return;}
+  if(!dashData)renderDash();
+  if(!dashData||dashData.allRealized.length===0){$("#aiOut").innerHTML=`<div class="mut">No closed trades in the current filter to analyze.</div>`;return;}
+  const btn=$("#aiAnalyze"),status=$("#aiStatus"),out=$("#aiOut");
+  btn.disabled=true;status.textContent="analyzing…";out.innerHTML="";
+  try{
+    const url=`https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:generateContent?key=${encodeURIComponent(key)}`;
+    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({contents:[{parts:[{text:aiBuildPrompt(dashData)}]}],generationConfig:{temperature:0.4,maxOutputTokens:1400}})});
+    if(!r.ok){let detail="";try{const j=await r.json();detail=(j.error&&j.error.message)||"";}catch(e){}
+      throw new Error(`HTTP ${r.status}${detail?" — "+detail:""}`);}
+    const j=await r.json();
+    const cand=j.candidates&&j.candidates[0];
+    const text=cand&&cand.content&&cand.content.parts?cand.content.parts.map(p=>p.text||"").join(""):"";
+    if(!text){throw new Error(cand&&cand.finishReason?("no text returned ("+cand.finishReason+")"):"empty response");}
+    out.innerHTML=aiMarkdown(text);
+    status.innerHTML=`<span class="mut">via ${AI_MODEL}</span>`;
+  }catch(e){
+    status.textContent="";
+    out.innerHTML=`<div class="neg">Analysis failed: ${esc(String(e.message||e))}</div>`+
+      `<div class="mut" style="margin-top:6px">Check that the key is valid and the Generative Language API is enabled for it. A 403/CORS error usually means the key is restricted or the API isn't enabled.</div>`;
+  }finally{btn.disabled=false;}
 }
 
 /* ============================ TRADES TABLE ============================ */
@@ -1944,6 +2075,12 @@ function init(){
   $("#fromDate").onchange=e=>{fromD=e.target.value;renderDash();};
   $("#toDate").onchange=e=>{toD=e.target.value;renderDash();};
   $("#clearDates").onclick=()=>{fromD=toD="";$("#fromDate").value="";$("#toDate").value="";renderDash();};
+  // AI analysis (Google Gemini)
+  $("#aiSaveKey").onclick=()=>{const k=$("#aiKey").value.trim();if(!k){toast("Paste a key first",true);return;}aiSetKey(k);$("#aiKey").value="";aiUpdateUI();toast("Key saved in this browser");};
+  $("#aiKey").addEventListener("keydown",e=>{if(e.key==="Enter")$("#aiSaveKey").click();});
+  $("#aiChangeKey").onclick=()=>{aiSetKey("");aiUpdateUI();$("#aiOut").innerHTML="";$("#aiStatus").textContent="";};
+  $("#aiAnalyze").onclick=aiAnalyze;
+  aiUpdateUI();
   $("#f-inst").onchange=()=>{$("#f-mult").dataset.auto="1";syncFormFields();};
   $("#f-sym").oninput=()=>{if($("#f-mult").dataset.auto!=="0")syncFormFields();};
   $("#f-mult").oninput=()=>{$("#f-mult").dataset.auto="0";};
