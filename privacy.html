@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy · Trading Ledger</title>
+<style>
+  :root{ --bg:#050403; --panel:#100d09; --line:#2b2014; --txt:#ffe8d6; --muted:#bf9d7e; --orange:#ff8a1e; }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,sans-serif;line-height:1.6;padding:32px 16px}
+  main{max-width:760px;margin:0 auto}
+  h1{color:var(--orange);font-size:26px;margin:0 0 4px}
+  h2{color:var(--orange);font-size:17px;margin:28px 0 8px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:24px}
+  a{color:var(--orange)}
+  ul{padding-left:20px} li{margin:6px 0}
+  code{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:13px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-top:16px}
+  hr{border:0;border-top:1px solid var(--line);margin:28px 0}
+  .mut{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Trading Ledger — Privacy Policy</h1>
+  <div class="sub">Last updated: June 10, 2026</div>
+
+  <p>Trading Ledger ("the app") is a personal trading journal that runs entirely in your web
+  browser. This policy explains what data the app handles and how. <strong>The app has no
+  backend server and its operators do not collect, receive, store, or have access to your
+  data.</strong></p>
+
+  <h2>What data the app handles</h2>
+  <ul>
+    <li><strong>Your trading entries</strong> (trades, options, spreads, futures, prices, notes,
+      account labels) that you type into the app.</li>
+    <li>App preferences such as your selected theme.</li>
+  </ul>
+
+  <h2>Where your data is stored</h2>
+  <ul>
+    <li><strong>In your browser</strong> by default, using local storage on your own device.
+      It never leaves your device unless you turn on Google Drive sync.</li>
+    <li><strong>In your own Google Drive</strong>, only if you choose to connect it (optional).
+      When connected, the app saves a single file, <code>trading-ledger.json</code>, to your
+      Drive so your journal can follow you across your devices.</li>
+  </ul>
+
+  <h2>Google user data</h2>
+  <p>If you connect Google Drive, the app requests the
+  <code>https://www.googleapis.com/auth/drive.file</code> permission. This grants the app access
+  <strong>only to the files it creates or that you open with it</strong> — it cannot see or
+  access any other files in your Google Drive.</p>
+  <ul>
+    <li><strong>How it's used:</strong> solely to create, read, and update your own
+      <code>trading-ledger.json</code> file so your ledger syncs between your devices.</li>
+    <li><strong>Where it goes:</strong> directly between your browser and your own Google Drive.
+      It is not sent to, processed by, or stored on any server operated by the app's developer.</li>
+    <li><strong>Sharing:</strong> your data is never sold or shared with anyone. No third parties
+      receive it.</li>
+    <li><strong>Limited Use:</strong> the app's use of information received from Google APIs
+      adheres to the
+      <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API
+      Services User Data Policy</a>, including its Limited Use requirements.</li>
+  </ul>
+
+  <h2>Analytics &amp; tracking</h2>
+  <p>None. The app contains no analytics, advertising, trackers, or cookies for tracking. (It may
+  load Google's sign-in library and Google Fonts from Google's servers when you open it.)</p>
+
+  <h2>Your control</h2>
+  <ul>
+    <li><strong>Export / delete locally:</strong> use the app's Data tab to export a backup or
+      clear all data at any time.</li>
+    <li><strong>Disconnect Drive:</strong> use "Disconnect" in the app, and/or revoke the app's
+      access at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
+    <li><strong>Delete the Drive file:</strong> delete <code>trading-ledger.json</code> from your
+      own Google Drive whenever you wish.</li>
+  </ul>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy? Open an issue at
+  <a href="https://github.com/THESHULK/Trading-Ledger/issues">github.com/THESHULK/Trading-Ledger/issues</a>.</p>
+
+  <hr>
+  <p class="mut">Trading Ledger is open-source software you run yourself. Because there is no
+  central server, you remain in control of your own data at all times.</p>
+</main>
+</body>
+</html>
