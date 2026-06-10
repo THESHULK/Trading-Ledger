@@ -11,6 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Ledger">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -399,6 +400,15 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       </div>
     </div>
     <div class="panel">
+      <h3>Sync across devices <span class="hint">Google Drive · your account</span></h3>
+      <p class="note" id="driveStatus"></p>
+      <div class="row">
+        <button class="btn" id="driveConnect">Connect Google Drive</button>
+        <button class="btn ghost" id="driveSyncNow" style="display:none">Sync now</button>
+        <button class="btn ghost" id="driveDisconnect" style="display:none">Disconnect</button>
+      </div>
+    </div>
+    <div class="panel">
       <h3>Save to a File on Disk <span class="hint">Chrome · Edge · Brave · Arc</span></h3>
       <p class="note" id="fsStatus"></p>
       <div class="row">
@@ -554,22 +564,142 @@ function migrateFutures(){
 
 /* ============================ STATE ============================ */
 const LS_KEY="tape.v1";
-let state={trades:[],marks:{},spreads:[],propfirm:[],seq:0};
+let state={trades:[],marks:{},spreads:[],propfirm:[],seq:0,updatedAt:0};
 const FS_OK = typeof window.showSaveFilePicker==="function";
 let fileHandle=null, fileName="", fileConnected=false, fileWriteTimer=null;
 
 function serialize(){return JSON.stringify(state,null,2);}
-function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.seq=p.seq||p.trades.length;migrateFutures();return true;}return false;}
+function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;migrateFutures();return true;}return false;}
 
 function load(){try{const r=localStorage.getItem(LS_KEY);if(r)applyParsed(JSON.parse(r));}catch(e){}}
 function save(){
+  if(!applyingRemote)state.updatedAt=Date.now();
   try{localStorage.setItem(LS_KEY,serialize());}catch(e){toast("Browser storage blocked",true);}
   if(fileConnected)scheduleFileWrite();
+  if(driveConnected&&!applyingRemote)scheduleDriveWrite();
   flashSaved();
 }
 function flashSaved(){const t=document.getElementById("savedTxt");
   if(fileConnected){t.textContent="→ "+fileName;}
   else{t.textContent="saved ✓";setTimeout(()=>{if(!fileConnected)t.textContent="saved locally";},1200);}}
+
+/* ============================ GOOGLE DRIVE SYNC ============================ */
+/* Per-user "bring your own cloud" sync: each user signs into their OWN Google
+   Drive and the ledger is stored in a hidden app-data folder there. The app
+   never sends data anywhere except the signed-in user's Drive. To enable, set
+   GDRIVE_CLIENT_ID to your OAuth Client ID (see README → Google Drive setup). */
+const GDRIVE_CLIENT_ID="";  // <-- paste your "...apps.googleusercontent.com" Client ID here
+const GDRIVE_SCOPE="https://www.googleapis.com/auth/drive.appdata";
+const GDRIVE_FILENAME="trading-ledger.json";
+let gTokenClient=null,gToken=null,gTokenExp=0,gFileId=null;
+let driveConnected=false,applyingRemote=false,driveBusy=false,driveWriteTimer=null,driveLastSync=0,driveAutoTimer=null;
+function driveConfigured(){return !!GDRIVE_CLIENT_ID;}
+function gisReady(){return typeof google!=="undefined"&&google.accounts&&google.accounts.oauth2;}
+function initDrive(){
+  if(!driveConfigured()||!gisReady())return false;
+  if(gTokenClient)return true;
+  gTokenClient=google.accounts.oauth2.initTokenClient({client_id:GDRIVE_CLIENT_ID,scope:GDRIVE_SCOPE,callback:()=>{}});
+  return true;
+}
+function requestToken(interactive){
+  return new Promise((resolve,reject)=>{
+    if(!initDrive())return reject(new Error("Drive not configured"));
+    gTokenClient.callback=(resp)=>{if(resp&&resp.access_token){gToken=resp.access_token;gTokenExp=Date.now()+((resp.expires_in||3500)*1000)-60000;resolve(gToken);}else reject(new Error("no token"));};
+    gTokenClient.error_callback=(err)=>reject(err||new Error("auth error"));
+    try{gTokenClient.requestAccessToken({prompt:interactive?"consent":""});}catch(e){reject(e);}
+  });
+}
+async function ensureToken(interactive){if(gToken&&Date.now()<gTokenExp)return gToken;return requestToken(interactive);}
+async function driveApi(url,opts={}){
+  if(!gToken||Date.now()>=gTokenExp)await ensureToken(false);
+  opts.headers=Object.assign({Authorization:"Bearer "+gToken},opts.headers||{});
+  let r=await fetch(url,opts);
+  if(r.status===401){gToken=null;await ensureToken(true);opts.headers.Authorization="Bearer "+gToken;r=await fetch(url,opts);}
+  return r;
+}
+async function driveFindFile(){
+  const q=encodeURIComponent(`name='${GDRIVE_FILENAME}'`);
+  const r=await driveApi(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id,modifiedTime)`);
+  const j=await r.json();
+  gFileId=(j.files&&j.files.length)?j.files[0].id:null;
+  return gFileId?j.files[0]:null;
+}
+async function driveDownload(){if(!gFileId)return null;const r=await driveApi(`https://www.googleapis.com/drive/v3/files/${gFileId}?alt=media`);if(!r.ok)return null;try{return await r.json();}catch(e){return null;}}
+async function driveUpload(){
+  const body=serialize();
+  if(gFileId){const r=await driveApi(`https://www.googleapis.com/upload/drive/v3/files/${gFileId}?uploadType=media`,{method:"PATCH",headers:{"Content-Type":"application/json"},body});return r.ok;}
+  const meta={name:GDRIVE_FILENAME,parents:["appDataFolder"],mimeType:"application/json"};
+  const b="lb"+Date.now().toString(36);
+  const multipart=`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${b}--`;
+  const r=await driveApi(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id`,{method:"POST",headers:{"Content-Type":"multipart/related; boundary="+b},body:multipart});
+  if(r.ok){const j=await r.json();gFileId=j.id;return true;}
+  return false;
+}
+async function driveSync(){
+  if(!driveConnected||driveBusy)return;
+  driveBusy=true;updateDriveUI("syncing…");
+  try{
+    await driveFindFile();
+    const remote=await driveDownload();
+    const localT=num(state.updatedAt,0),remoteT=remote?num(remote.updatedAt,0):-1;
+    if(remote&&remoteT>localT){
+      applyingRemote=true;applyParsed(remote);applyingRemote=false;
+      try{localStorage.setItem(LS_KEY,serialize());}catch(e){}
+      refreshAll();toast("Pulled latest from Google Drive");
+    }else if(!remote||localT>remoteT){await driveUpload();}
+    driveLastSync=Date.now();updateDriveUI();
+  }catch(e){updateDriveUI("sync error — try again");}
+  finally{driveBusy=false;}
+}
+function scheduleDriveWrite(){
+  if(!driveConnected)return;clearTimeout(driveWriteTimer);
+  driveWriteTimer=setTimeout(async()=>{
+    if(driveBusy)return;driveBusy=true;updateDriveUI("saving…");
+    try{if(gFileId===null)await driveFindFile();await driveUpload();driveLastSync=Date.now();}
+    catch(e){updateDriveUI("sync error — try again");}
+    finally{driveBusy=false;updateDriveUI();}
+  },1500);
+}
+function startDriveAuto(){clearInterval(driveAutoTimer);driveAutoTimer=setInterval(()=>{if(driveConnected&&!document.hidden)driveSync();},120000);}
+async function driveConnect(){
+  if(!driveConfigured()){toast("Cloud sync isn't configured yet",true);return;}
+  if(!gisReady()){toast("Google sign-in still loading — try again",true);return;}
+  try{await ensureToken(true);driveConnected=true;try{localStorage.setItem("gdrive_on","1");}catch(e){}
+    updateDriveUI();await driveSync();startDriveAuto();toast("Connected to Google Drive");}
+  catch(e){toast("Google sign-in canceled",true);}
+}
+function driveDisconnect(){
+  if(gToken&&gisReady()&&google.accounts.oauth2.revoke)try{google.accounts.oauth2.revoke(gToken);}catch(e){}
+  driveConnected=false;gToken=null;gFileId=null;clearInterval(driveAutoTimer);
+  try{localStorage.removeItem("gdrive_on");}catch(e){}
+  updateDriveUI();toast("Disconnected from Google Drive");
+}
+function driveAutoResume(){
+  if(!driveConfigured())return;
+  let on=false;try{on=localStorage.getItem("gdrive_on")==="1";}catch(e){}
+  if(!on)return;
+  let tries=0;const iv=setInterval(async()=>{
+    if(gisReady()){clearInterval(iv);
+      try{await ensureToken(false);driveConnected=true;updateDriveUI();await driveSync();startDriveAuto();}
+      catch(e){updateDriveUI();}
+    }else if(++tries>60)clearInterval(iv);
+  },150);
+}
+function updateDriveUI(msg){
+  const s=$("#driveStatus");if(!s)return;
+  const show=(id,on)=>{const el=$(id);if(el)el.style.display=on?"":"none";};
+  if(!driveConfigured()){
+    s.innerHTML=`<span class="mut">Cloud sync isn't set up for this build yet.</span>`;
+    show("#driveConnect",false);show("#driveSyncNow",false);show("#driveDisconnect",false);return;}
+  if(driveConnected){
+    const when=driveLastSync?new Date(driveLastSync).toLocaleTimeString():"—";
+    s.innerHTML=`<span class="pos">● Synced</span> to your Google Drive · ${msg||("last sync "+when)}`;
+    show("#driveConnect",false);show("#driveSyncNow",true);show("#driveDisconnect",true);
+  }else{
+    s.innerHTML=`Keep your ledger in <b>your own</b> Google Drive so it follows you across devices. Data goes only to your Drive — never to a server.`;
+    show("#driveConnect",true);show("#driveSyncNow",false);show("#driveDisconnect",false);
+  }
+}
 
 /* ---- IndexedDB: remember the chosen file handle across sessions ---- */
 function idb(){return new Promise((res,rej)=>{const r=indexedDB.open("tape-fs",1);
@@ -1496,6 +1626,10 @@ function init(){
   $("#fsReconnect").onclick=reconnectFile;
   $("#fsDisconnect").onclick=disconnectFile;
   restoreFile();
+  $("#driveConnect").onclick=driveConnect;
+  $("#driveSyncNow").onclick=driveSync;
+  $("#driveDisconnect").onclick=driveDisconnect;
+  updateDriveUI();driveAutoResume();
   $("#clearAll").onclick=()=>{if(confirm("Delete ALL trades and marks? This cannot be undone."))
     {state={trades:[],marks:{},spreads:[],propfirm:[],seq:0};save();refreshAll();toast("All data deleted");}};
   window.addEventListener("resize",()=>{if($("#view-dash").classList.contains("on"))renderDash();});
