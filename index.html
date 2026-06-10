@@ -587,8 +587,10 @@ function flashSaved(){const t=document.getElementById("savedTxt");
 /* Per-user "bring your own cloud" sync: each user signs into their OWN Google
    Drive and the ledger is stored in a hidden app-data folder there. The app
    never sends data anywhere except the signed-in user's Drive. To enable, set
-   GDRIVE_CLIENT_ID to your OAuth Client ID (see README → Google Drive setup). */
-const GDRIVE_CLIENT_ID="";  // <-- paste your "...apps.googleusercontent.com" Client ID here
+   GDRIVE_CLIENT_ID to your app's one OAuth Client ID (see README → Google Drive setup).
+   This single ID is shared by all users — each signs into their OWN Google account and
+   syncs to their OWN Drive, exactly like "Sign in with Google" anywhere. */
+const GDRIVE_CLIENT_ID="524962312143-dcgl2qiekpag1553ontnkvjj51k0d0rf.apps.googleusercontent.com";  // <-- paste your "...apps.googleusercontent.com" Client ID here
 const GDRIVE_SCOPE="https://www.googleapis.com/auth/drive.appdata";
 const GDRIVE_FILENAME="trading-ledger.json";
 let gTokenClient=null,gToken=null,gTokenExp=0,gFileId=null;

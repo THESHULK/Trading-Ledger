@@ -83,7 +83,7 @@ generating a **Client ID** the app uses to sign users in. Do this once.
 2. Search **"Google Drive API"** → click it → **Enable**.
 
 #### Step 3 — Configure the consent screen
-Left menu → **APIs & Services → Google Auth Platform** (or **OAuth consent screen**).
+Left menu → **APIs & Services → OAuth consent screen** (or **Google Auth Platform**).
 
 1. **Get started / Branding:**
    - **App name:** e.g. `Trading Ledger`
@@ -128,6 +128,12 @@ Left menu → **APIs & Services → Credentials** (or **Google Auth Platform →
    from the Credentials list.)
 
 #### Step 5 — Put the Client ID in the app
+
+You create **one** Client ID and bake it into the app — it's shared by everyone. The Client ID
+is **not a secret** (it's safe in public code); it just identifies *the app* to Google and only
+works for the origins you authorized in Step 4. Each user signs into their own Google account
+and syncs to their own Drive — they never need a Client ID of their own.
+
 1. Open `index.html`, find this line near the top of the `GOOGLE DRIVE SYNC` section:
 
    ```js
@@ -141,7 +147,7 @@ Left menu → **APIs & Services → Credentials** (or **Google Auth Platform →
 3. Save, **bump `CACHE_VERSION` in `sw.js`** (so installed clients refresh), and redeploy
    (or just reload on `localhost`).
 
-Until a Client ID is set, the **Data → Sync across devices** panel shows
+Until the Client ID is set, the **Data → Sync across devices** panel shows
 "Cloud sync isn't set up for this build yet" and the rest of the app works locally as normal.
 
 #### Step 6 — Verify it works
@@ -157,7 +163,8 @@ Until a Client ID is set, the **Data → Sync across devices** panel shows
 
 | Symptom | Fix |
 |---|---|
-| Button does nothing / "isn't configured" | `GDRIVE_CLIENT_ID` is still empty, or you're on `file://`. Set the ID and serve over http(s). |
+| Panel says "Cloud sync isn't set up" | `GDRIVE_CLIENT_ID` is still empty in `index.html` — set it (Step 5) and redeploy. |
+| **Connect** does nothing | You're on `file://`, or Google sign-in is still loading. Serve over http(s) and retry. |
 | Popup error: *"origin is not allowed for the given client ID"* / `idpiframe_initialization_failed` | The page's origin isn't in **Authorized JavaScript origins**. Add the exact origin (no path/slash). Changes can take a few minutes. |
 | *"Access blocked: app is being tested" / "hasn't completed verification"* | Add that Google account under **Test users** (Step 3.2). |
 | *"Access blocked: this app is blocked"* | The `drive.appdata` scope isn't added, or you signed in with a non-test user. Check Step 3.2–3.3. |
