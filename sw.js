@@ -1,6 +1,6 @@
 /* Trading Ledger service worker — offline support + safe updates.
    Bump CACHE_VERSION whenever you deploy a new index.html so clients refresh. */
-const CACHE_VERSION = "ledger-v3";
+const CACHE_VERSION = "ledger-v4";
 const CORE = [
   "./",
   "./index.html",
@@ -31,10 +31,13 @@ self.addEventListener("fetch", (e) => {
   if (url.origin !== self.location.origin) return;
 
   // App HTML: network-first so a new deploy is picked up; fall back to cache offline.
+  // cache:"reload" skips the device's HTTP cache (GitHub Pages serves ~10-min max-age),
+  // so an installed PWA revalidates with the server on every real launch.
   if (req.mode === "navigate" || url.pathname.endsWith("/index.html") || url.pathname.endsWith("/")) {
     e.respondWith(
-      fetch(req)
+      fetch(req.url, { cache: "reload" })
         .then((res) => {
+          if (!res.ok) throw new Error("bad status");
           const copy = res.clone();
           caches.open(CACHE_VERSION).then((c) => c.put("./index.html", copy));
           return res;
