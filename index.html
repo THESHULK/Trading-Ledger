@@ -343,6 +343,19 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <div class="chartwrap"><svg class="chart" id="calChart" viewBox="0 0 720 170"></svg>
         <div class="tip" id="calTip"></div></div>
     </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h3>P&amp;L Distribution <span class="hint" id="histHint">per closed trade</span></h3>
+        <div class="chartwrap"><svg class="chart" id="histChart" viewBox="0 0 720 260"></svg>
+          <div class="tip" id="histTip"></div></div>
+      </div>
+      <div class="panel">
+        <h3>P&amp;L by Day of Week</h3>
+        <div class="chartwrap"><svg class="chart" id="dowChart" viewBox="0 0 360 260"></svg>
+          <div class="tip" id="dowTip"></div></div>
+      </div>
+    </div>
   </section>
 
   <!-- TRADES -->
@@ -959,6 +972,8 @@ function renderDash(){
   drawWinStats(allRealized);
   drawMonthly(allRealized.concat(propEvents));
   drawCalendar(allRealized.concat(propEvents));
+  drawHistogram(allRealized);
+  drawDayOfWeek(allRealized.concat(propEvents));
 }
 const fmtSignedColored=n=>`${n>=0?"+":"−"}$${Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 
@@ -1268,6 +1283,79 @@ function drawCalendar(events){
     c.addEventListener("mousemove",ev=>show(c,ev.clientX,ev.clientY));
     c.addEventListener("mouseleave",()=>tip.style.opacity=0);
     c.addEventListener("touchstart",ev=>{const t=ev.touches[0];show(c,t.clientX,t.clientY);clearTimeout(tip._t);tip._t=setTimeout(()=>tip.style.opacity=0,2600);ev.preventDefault();},{passive:false});
+  });
+}
+
+/* ---- P&L distribution histogram ---- */
+function drawHistogram(realized){
+  const svg=$("#histChart");const W=720,H=260,pad={l:50,r:14,t:14,b:42};
+  if(!realized.length){chartEmpty(svg,"no closed trades in range");$("#histHint").textContent="per closed trade";return;}
+  const vals=realized.map(r=>r.pnl);
+  const maxAbs=Math.max(1,...vals.map(Math.abs));
+  // symmetric bins around zero so wins/losses line up; ~9 bins each side, snapped to a round width
+  const rawStep=maxAbs/7,mag=Math.pow(10,Math.floor(Math.log10(rawStep)));
+  const step=(rawStep/mag<=1?1:rawStep/mag<=2?2:rawStep/mag<=5?5:10)*mag;
+  const edge=Math.ceil(maxAbs/step)*step;            // outermost edge
+  const nb=Math.round(edge/step);                    // bins per side
+  const bins=[];for(let i=-nb;i<nb;i++)bins.push({lo:i*step,hi:(i+1)*step,c:0});
+  for(const v of vals){let idx=Math.floor(v/step)+nb;idx=Math.max(0,Math.min(bins.length-1,idx));bins[idx].c++;}
+  const maxC=Math.max(1,...bins.map(b=>b.c));
+  const innerW=W-pad.l-pad.r,innerH=H-pad.t-pad.b,bw=innerW/bins.length;
+  const X=v=>pad.l+(v+edge)/(2*edge)*innerW;
+  const Y=c=>pad.t+(1-c/maxC)*innerH;
+  let g="";
+  for(let i=0;i<=3;i++){const c=Math.round(maxC*i/3),y=pad.t+(1-i/3)*innerH;
+    g+=`<line class="gridline" x1="${pad.l}" y1="${y.toFixed(1)}" x2="${W-pad.r}" y2="${y.toFixed(1)}"/>`;
+    g+=`<text class="axislbl" x="${pad.l-8}" y="${(y+3).toFixed(1)}" text-anchor="end">${c}</text>`;}
+  bins.forEach((b,i)=>{const x=pad.l+i*bw,h=pad.t+innerH-Y(b.c);
+    const mid=(b.lo+b.hi)/2,col=mid>=0?'var(--green)':'var(--red)';
+    g+=`<rect class="hbar" x="${(x+1).toFixed(1)}" y="${Y(b.c).toFixed(1)}" width="${Math.max(0,bw-2).toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" fill="${col}" opacity="${b.c?0.85:0}" data-lo="${b.lo}" data-hi="${b.hi}" data-c="${b.c}" style="cursor:pointer"/>`;});
+  // zero divider + a few x labels
+  g+=`<line x1="${X(0).toFixed(1)}" y1="${pad.t}" x2="${X(0).toFixed(1)}" y2="${pad.t+innerH}" stroke="var(--line2)"/>`;
+  const lblEvery=Math.ceil(bins.length/8);
+  bins.forEach((b,i)=>{if(i%lblEvery===0)g+=`<text class="axislbl" x="${X(b.lo).toFixed(1)}" y="${H-22}" text-anchor="middle">${shortMoney(b.lo)}</text>`;});
+  g+=`<text class="axislbl" x="${X(0).toFixed(1)}" y="${H-8}" text-anchor="middle" style="fill:var(--faint)">trade P&L →</text>`;
+  svg.innerHTML=g;
+  const med=vals.slice().sort((a,b)=>a-b)[Math.floor(vals.length/2)];
+  $("#histHint").innerHTML=`${vals.length} trades · median <b class="${cls(med)}">${shortMoney(med)}</b>`;
+  const tip=$("#histTip");
+  const show=(b,cx)=>{const r=svg.getBoundingClientRect();
+    tip.innerHTML=`${shortMoney(+b.dataset.lo)} … ${shortMoney(+b.dataset.hi)}<br><b>${b.dataset.c} trade${b.dataset.c==="1"?"":"s"}</b>`;
+    tip.style.left=Math.max(0,Math.min((cx-r.left)-55,r.width-114))+"px";tip.style.top="6px";tip.style.opacity=1;};
+  svg.querySelectorAll(".hbar").forEach(b=>{
+    b.addEventListener("mousemove",ev=>show(b,ev.clientX));
+    b.addEventListener("mouseleave",()=>tip.style.opacity=0);
+    b.addEventListener("touchstart",ev=>{show(b,ev.touches[0].clientX);clearTimeout(tip._t);tip._t=setTimeout(()=>tip.style.opacity=0,2600);ev.preventDefault();},{passive:false});
+  });
+}
+
+/* ---- P&L by day of week ---- */
+function drawDayOfWeek(events){
+  const svg=$("#dowChart");const W=360,H=260,pad={l:14,r:14,t:18,b:42};
+  if(!events.length){chartEmpty(svg,"no closed trades in range");return;}
+  const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const agg=DOW.map(d=>({d,v:0,n:0}));
+  for(const e of events){const s=String(e.date).slice(0,10);const[y,m,dd]=s.split("-").map(Number);
+    if(!y)continue;const wd=new Date(y,m-1,dd).getDay();agg[wd].v+=e.pnl;agg[wd].n++;}
+  // weekends only shown if they carry trades
+  const data=agg.filter((a,i)=>a.n>0||(i>=1&&i<=5));
+  const maxA=Math.max(1,...data.map(a=>Math.abs(a.v)));
+  const bw=(W-pad.l-pad.r)/data.length,zero=pad.t+(H-pad.t-pad.b)/2,half=(H-pad.t-pad.b)/2-6;
+  let g=`<line x1="${pad.l}" y1="${zero}" x2="${W-pad.r}" y2="${zero}" stroke="var(--line2)"/>`;
+  data.forEach((a,i)=>{const h=(Math.abs(a.v)/maxA)*half,x=pad.l+i*bw+bw*0.18,w=bw*0.64,y=a.v>=0?zero-h:zero;
+    g+=`<rect class="dbar" x="${pad.l+i*bw}" y="${pad.t}" width="${bw}" height="${H-pad.t-pad.b}" fill="transparent" data-d="${a.d}" data-v="${a.v}" data-n="${a.n}" style="cursor:pointer"/>`;
+    g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" rx="3" fill="${a.v>=0?'var(--green)':'var(--red)'}" opacity=".9" style="pointer-events:none"/>`;
+    g+=`<text class="axislbl" x="${(x+w/2).toFixed(1)}" y="${H-14}" text-anchor="middle" style="pointer-events:none">${a.d}</text>`;
+    g+=`<text class="axislbl" x="${(x+w/2).toFixed(1)}" y="${a.v>=0?(y-5).toFixed(1):(y+h+13).toFixed(1)}" text-anchor="middle" style="pointer-events:none">${shortMoney(a.v)}</text>`;});
+  svg.innerHTML=g;
+  const tip=$("#dowTip");
+  const show=(b,cx,cy)=>{const r=svg.getBoundingClientRect();
+    tip.innerHTML=`${b.dataset.d} · ${b.dataset.n} trade${b.dataset.n==="1"?"":"s"}<br><b class="${cls(+b.dataset.v)}">${fmtSignedColored(+b.dataset.v).replace("−","-")}</b>`;
+    tip.style.left=Math.max(0,Math.min((cx-r.left)-50,r.width-104))+"px";tip.style.top=Math.max(0,(cy-r.top)-50)+"px";tip.style.opacity=1;};
+  svg.querySelectorAll(".dbar").forEach(b=>{
+    b.addEventListener("mousemove",ev=>show(b,ev.clientX,ev.clientY));
+    b.addEventListener("mouseleave",()=>tip.style.opacity=0);
+    b.addEventListener("touchstart",ev=>{const t=ev.touches[0];show(b,t.clientX,t.clientY);clearTimeout(tip._t);tip._t=setTimeout(()=>tip.style.opacity=0,2600);ev.preventDefault();},{passive:false});
   });
 }
 
