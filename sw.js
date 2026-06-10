@@ -1,6 +1,6 @@
 /* Trading Ledger service worker — offline support + safe updates.
    Bump CACHE_VERSION whenever you deploy a new index.html so clients refresh. */
-const CACHE_VERSION = "ledger-v2";
+const CACHE_VERSION = "ledger-v3";
 const CORE = [
   "./",
   "./index.html",

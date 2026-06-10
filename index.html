@@ -101,16 +101,19 @@ nav button.on{color:var(--bg);background:var(--green);border-color:var(--green)}
 .saved .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);flex:0 0 auto}
 #savedTxt{white-space:nowrap}
 @media(max-width:720px){
-  header{flex-wrap:wrap;gap:10px 12px;padding:12px 14px}
+  header{flex-wrap:wrap;gap:8px 8px;padding:12px 14px}
   .brand{order:1}
-  .brand b{font-size:18px}
-  .saved{order:2;margin-left:auto;flex-wrap:wrap;justify-content:flex-end;gap:6px 8px}
-  .themesel{max-width:150px}
+  .brand b{font-size:16px}
+  .brand .tick,.brand small{display:none}        /* keep the title row compact so controls fit beside it */
+  .saved{order:2;margin-left:auto;flex-wrap:nowrap;justify-content:flex-end;gap:6px;font-size:10px}
+  .themesel{max-width:96px;padding:5px 7px;font-size:10px}
   nav{order:3;width:100%;margin-left:0;flex-wrap:nowrap;overflow-x:auto;gap:6px;
       -webkit-overflow-scrolling:touch;padding-bottom:2px;scrollbar-width:none}
   nav::-webkit-scrollbar{display:none}
   nav button{flex:0 0 auto;white-space:nowrap;padding:8px 12px}
   main{padding:18px 14px 80px}
+  .filters .field{flex:1 1 130px;min-width:0}
+  #clearDates{flex:1 1 100%;align-self:stretch;text-align:center}
 }
 
 main{max-width:1180px;margin:0 auto;padding:24px 22px 80px}
@@ -132,6 +135,8 @@ input[type=date],input[type=text],input[type=number],select{
   color:var(--txt);padding:8px 10px;outline:none;transition:border-color .15s;
 }
 .field input,.field select{width:100%;min-width:0}
+/* iOS date inputs otherwise keep an intrinsic min width and overflow their cell */
+input[type=date]{-webkit-appearance:none;appearance:none}
 input:focus,select:focus{border-color:var(--green-dim)}
 select{cursor:pointer}
 
@@ -593,7 +598,7 @@ function save(){
   if(driveConnected&&!applyingRemote)scheduleDriveWrite();
   flashSaved();
 }
-function settledSavedText(){return driveConnected?"☁ Drive":(fileConnected?("→ "+fileName):"saved locally");}
+function settledSavedText(){return driveConnected?"☁ Google Drive":(fileConnected?("→ "+fileName):"saved locally");}
 function flashSaved(){const t=document.getElementById("savedTxt");if(!t)return;
   if(driveConnected||fileConnected){t.textContent=settledSavedText();}
   else{t.textContent="saved ✓";setTimeout(()=>{t.textContent=settledSavedText();},1200);}}
