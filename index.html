@@ -616,6 +616,12 @@ const GDRIVE_CLIENT_ID="524962312143-dcgl2qiekpag1553ontnkvjj51k0d0rf.apps.googl
 const GDRIVE_SCOPE="https://www.googleapis.com/auth/drive.file";
 const GDRIVE_FILENAME="trading-ledger.json";
 let gTokenClient=null,gToken=null,gTokenExp=0,gFileId=null;
+const GTOKEN_KEY="gdrive_token";
+// Cache the short-lived access token so reopening the site within its lifetime
+// doesn't pop the Google token request again. Cleared on disconnect.
+function saveToken(){try{localStorage.setItem(GTOKEN_KEY,JSON.stringify({t:gToken,e:gTokenExp}));}catch(e){}}
+function loadToken(){try{const o=JSON.parse(localStorage.getItem(GTOKEN_KEY)||"null");if(o&&o.t&&Date.now()<num(o.e,0)){gToken=o.t;gTokenExp=o.e;}}catch(e){}}
+function clearToken(){try{localStorage.removeItem(GTOKEN_KEY);}catch(e){}}
 let driveConnected=false,applyingRemote=false,driveBusy=false,driveWriteTimer=null,driveLastSync=0,driveAutoTimer=null;
 function driveConfigured(){return !!GDRIVE_CLIENT_ID;}
 function gisReady(){return typeof google!=="undefined"&&google.accounts&&google.accounts.oauth2;}
@@ -628,7 +634,7 @@ function initDrive(){
 function requestToken(interactive){
   return new Promise((resolve,reject)=>{
     if(!initDrive())return reject(new Error("Drive not configured"));
-    gTokenClient.callback=(resp)=>{if(resp&&resp.access_token){gToken=resp.access_token;gTokenExp=Date.now()+((resp.expires_in||3500)*1000)-60000;resolve(gToken);}else reject(new Error("no token"));};
+    gTokenClient.callback=(resp)=>{if(resp&&resp.access_token){gToken=resp.access_token;gTokenExp=Date.now()+((resp.expires_in||3500)*1000)-60000;saveToken();resolve(gToken);}else reject(new Error("no token"));};
     gTokenClient.error_callback=(err)=>reject(err||new Error("auth error"));
     try{gTokenClient.requestAccessToken({prompt:interactive?"consent":""});}catch(e){reject(e);}
   });
@@ -705,6 +711,7 @@ async function driveConnect(){
 function driveDisconnect(){
   if(gToken&&gisReady()&&google.accounts.oauth2.revoke)try{google.accounts.oauth2.revoke(gToken);}catch(e){}
   driveConnected=false;gToken=null;gFileId=null;clearInterval(driveAutoTimer);
+  clearToken();
   try{localStorage.removeItem("gdrive_on");}catch(e){}
   updateDriveUI();flashSaved();toast("Disconnected from Google Drive");
 }
@@ -1670,7 +1677,7 @@ function init(){
   $("#driveConnect").onclick=driveConnect;
   $("#driveSyncNow").onclick=driveSync;
   $("#driveDisconnect").onclick=driveDisconnect;
-  updateDriveUI();driveAutoResume();
+  loadToken();updateDriveUI();driveAutoResume();
   $("#clearAll").onclick=()=>{if(confirm("Delete ALL trades and marks? This cannot be undone."))
     {state={trades:[],marks:{},spreads:[],propfirm:[],seq:0};save();refreshAll();toast("All data deleted");}};
   window.addEventListener("resize",()=>{if($("#view-dash").classList.contains("on"))renderDash();});
