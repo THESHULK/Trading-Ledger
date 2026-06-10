@@ -1,0 +1,7 @@
+# data — never commit
+*.json
+trading-ledger*
+*.csv
+Ledger.html
+.DS_Store
+.claude/
