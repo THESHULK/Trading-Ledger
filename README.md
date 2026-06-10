@@ -57,9 +57,11 @@ The app is just static files, so any static host works. **GitHub Pages:**
 
 ## Google Drive sync (optional, bring-your-own-cloud)
 
-Each user signs into **their own** Google Drive; the ledger is stored in a hidden,
-app-private folder (`drive.appdata` scope). The app can only see the one file it creates —
-not the rest of the user's Drive — and the data never touches any server you run.
+Each user signs into **their own** Google Drive; the ledger is saved there as a visible file,
+`trading-ledger.json` (using the `drive.file` scope). The app can only see files it created or
+that you opened with it — never the rest of your Drive — and the data never touches any server
+you run. `drive.file` is a **non-sensitive** scope, so you can open the app to everyone without
+Google's verification review (see "Opening it up to everyone" below).
 
 ### One-time setup: create an OAuth Client ID
 
@@ -98,11 +100,11 @@ Left menu → **APIs & Services → OAuth consent screen** (or **Google Auth Pla
      Up to 100 test users.
 3. **Data Access** (or "Scopes" on the old UI):
    - Click **Add or remove scopes**.
-   - In the filter box type **`drive.appdata`**, check
-     **`.../auth/drive.appdata`** ("View and manage its own configuration data in your
-     Google Drive"), → **Update** → **Save**.
-   - *Do not* add broader Drive scopes — `appdata` is all the app needs and keeps it
-     limited to its own hidden file.
+   - In the filter box type **`drive.file`**, check
+     **`.../auth/drive.file`** ("See, edit, create, and delete only the specific Google Drive
+     files you use with this app"), → **Update** → **Save**.
+   - *Do not* add broader Drive scopes — `drive.file` is all the app needs, it's
+     **non-sensitive** (no verification review required), and it limits the app to its own file.
 
 #### Step 4 — Create the Client ID
 Left menu → **APIs & Services → Credentials** (or **Google Auth Platform → Clients**).
@@ -167,7 +169,7 @@ Until the Client ID is set, the **Data → Sync across devices** panel shows
 | **Connect** does nothing | You're on `file://`, or Google sign-in is still loading. Serve over http(s) and retry. |
 | Popup error: *"origin is not allowed for the given client ID"* / `idpiframe_initialization_failed` | The page's origin isn't in **Authorized JavaScript origins**. Add the exact origin (no path/slash). Changes can take a few minutes. |
 | *"Access blocked: app is being tested" / "hasn't completed verification"* | Add that Google account under **Test users** (Step 3.2). |
-| *"Access blocked: this app is blocked"* | The `drive.appdata` scope isn't added, or you signed in with a non-test user. Check Step 3.2–3.3. |
+| *"Access blocked: this app is blocked"* | The `drive.file` scope isn't added, or you signed in with a non-test user. Check Step 3.2–3.3. |
 | Connects but data doesn't sync | Confirm the **Drive API** is enabled (Step 2) and you granted access when prompted. Use **Sync now** and watch the status line. |
 
 ### How sync behaves
@@ -179,16 +181,29 @@ Until the Client ID is set, the **Data → Sync across devices** panel shows
   person across devices; if you edit two devices *simultaneously while offline*, the later save wins.
 - Access is per-session (Google tokens last ~1 hour and silently refresh while signed in).
 
-> Going beyond ~100 users, or removing the "unverified app" screen, requires submitting the
-> app for Google verification (the `drive.appdata` scope is "sensitive"). For personal or
-> small-community use, Testing mode + test users is enough.
+### Opening it up to everyone (beyond test users)
+
+While the app is in **Testing**, only the Google accounts you added as **test users** can
+connect (max 100), and they see a one-time "Google hasn't verified this app" screen.
+
+Because this app uses **`drive.file`** — a **non-sensitive** scope — opening it to everyone is
+easy and needs **no verification review**:
+
+1. **OAuth consent screen / Google Auth Platform → Audience.**
+2. Under **Publishing status**, click **Publish app → Confirm** (status becomes "In production").
+3. Done — no review, no 100-user cap, and the "unverified app" warning goes away. Each user
+   still individually grants access to their own Drive when they click Connect.
+
+> A privacy policy URL is good practice (and Google may ask for one on the consent screen), but
+> the multi-week verification process only applies to *sensitive/restricted* scopes — which
+> `drive.file` is not. If you ever switch to a broader Drive scope, expect that review.
 
 ---
 
 ## Data & privacy
 
 - Default storage is your browser's `localStorage` (per device).
-- Optional Google Drive sync stores one JSON file in **your** Drive's hidden app folder.
+- Optional Google Drive sync stores one visible JSON file (`trading-ledger.json`) in **your** Drive.
 - **Backups:** Data tab → *Export backup (JSON)* / *Export trades (CSV)*; restore via *Import*.
 - **Never commit your data to git.** `.gitignore` excludes `*.json`, `*.csv`, `trading-ledger*`,
   and `Ledger.html` so your trade history stays off GitHub. Keep it that way.
