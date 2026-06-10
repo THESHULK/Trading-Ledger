@@ -101,7 +101,8 @@ nav button.on{color:var(--bg);background:var(--green);border-color:var(--green)}
 .saved .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);flex:0 0 auto}
 #savedTxt{white-space:nowrap}
 @media(max-width:720px){
-  header{flex-wrap:wrap;gap:8px 8px;padding:12px 14px}
+  /* extra top space so the theme dropdown clears the iPhone notch / browser chrome */
+  header{flex-wrap:wrap;gap:8px 8px;padding:calc(26px + env(safe-area-inset-top)) 14px 12px}
   .brand{order:1}
   .brand b{font-size:16px}
   .brand .tick,.brand small{display:none}        /* keep the title row compact so controls fit beside it */
