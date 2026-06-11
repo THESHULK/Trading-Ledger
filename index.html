@@ -967,6 +967,13 @@ const fmtSigned=n=>(n>=0?"+":"")+fmtMoney(n).replace("-","");
 const fmtNum=n=>n.toLocaleString(undefined,{maximumFractionDigits:4});
 const cls=n=>n>0?"pos":n<0?"neg":"mut";
 const today=()=>new Date().toISOString().slice(0,10);
+// confirm before saving an entry dated after today (almost always a typo). ISO dates compare lexically.
+function futureDateOK(...dates){
+  const t=today();
+  const bad=dates.filter(d=>d&&String(d).slice(0,10)>t);
+  if(!bad.length)return true;
+  return confirm(`Heads up — ${bad.length>1?"these dates are":"this date is"} in the future: ${bad.join(", ")}.\n\nFuture-dated entries are usually a typo and show up oddly on your P&L calendar. Save anyway?`);
+}
 function toast(msg,err){const t=$("#toast");t.textContent=msg;t.className="toast show"+(err?" err":"");
   clearTimeout(t._t);t._t=setTimeout(()=>t.className="toast",2600);}
 function symLabel(t){if(t.instrument==="option")return `${t.symbol} ${t.expiry||""} ${t.strike??""}${(t.optionType||"")[0]?.toUpperCase()||""}`;return t.symbol;}
@@ -1937,6 +1944,7 @@ function saveTrade(){
     t={...base,action:$("#f-act").value,quantity:qty,price:price};
     if(inst==="option"){t.expiry=$("#f-exp").value||"";t.strike=parseFloat($("#f-strike").value)||0;t.optionType=$("#f-otype").value;}
   }
+  if(!futureDateOK(t.date))return;
   if(editId){state.trades=state.trades.map(x=>x.id===editId?t:x);toast("Trade updated");}
   else{state.trades.push(t);toast("Trade added");}
   save();resetForm();refreshAll();
@@ -2079,6 +2087,7 @@ function saveSpread(){
   if(!s.symbol){toast("Enter a symbol",true);return;}
   if(!(s.quantity>0)){toast("Quantity must be > 0",true);return;}
   s.status=isSpreadClosed(s)?"closed":"open";
+  if(!futureDateOK(s.dateOpened,s.dateClosed))return;
   s.id=editSpreadId||("sp"+Date.now()+Math.random().toString(36).slice(2,5));
   if(editSpreadId){state.spreads=state.spreads.map(x=>x.id===editSpreadId?s:x);toast("Trade updated");}
   else{state.spreads.push(s);toast("Sell-side trade added");}
@@ -2190,6 +2199,7 @@ function savePf(){
   const date=$("#pf-date").value,amt=parseFloat($("#pf-amt").value),type=($("#pf-type").value||"").trim();
   if(!date){toast("Pick a date",true);return;}
   if(!isFinite(amt)){toast("Enter an amount",true);return;}
+  if(!futureDateOK(date))return;
   const e={id:editPfId||("pf"+Date.now()+Math.random().toString(36).slice(2,5)),date,amount:amt,type};
   if(editPfId){state.propfirm=state.propfirm.map(x=>x.id===editPfId?e:x);toast("Entry updated");}
   else{state.propfirm.push(e);toast("Entry added");}
