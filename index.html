@@ -1453,16 +1453,30 @@ function aiBuildPayload(d){
 }
 function aiBuildPrompt(d){
   const data=aiBuildPayload(d);
-  return `You are a sharp, candid trading coach reviewing one trader's journal. Analyze the data below and give specific, actionable feedback — not generic platitudes.
+  const n=data.overall.closedTrades;
+  return `You are a demanding, experienced trading coach reviewing ONE trader's complete journal, provided as JSON below. Write a detailed, specific critique that helps them improve.
 
-Cover, with concrete numbers from the data:
-1. Overall performance read (is this trader net profitable, and is it sustainable given win rate vs avg win/loss and profit factor?).
-2. Biggest strengths — which instruments, tickers, or days are working.
-3. Biggest leaks — where losses concentrate (tickers, instruments, days of week, position sizing, holding losers).
-4. Risk: comment on max drawdown and any signs of oversized losers or revenge trading visible in the closed-trade sequence.
-5. 3-5 concrete, prioritized suggestions.
+HARD RULES — follow all of them:
+- DO NOT just restate totals. The trader can already see their total P/L on screen. Restating it is useless. Your job is to explain WHY the number is what it is and WHAT TO CHANGE.
+- Every single claim must cite concrete values from the DATA: specific tickers, instruments, days of week, dollar amounts, the win rate, profit factor, expectancy, avg win vs avg loss, or max drawdown. No vague statements that could apply to any trader.
+- Dig into the breakdowns. pnlByTicker, pnlByInstrument, pnlByDayOfWeek and the per-trade closedTrades list are where the real insights are — find the winners and the bleeders by name and amount.
+- Be direct and critical where the numbers warrant it. Skip flattery, hedging, and filler.
+- Base everything only on the DATA; never invent trades or numbers. If something can't be judged from the data (e.g. no hold-time info), say what the trader should start tracking instead.
+${n<8?`- NOTE: only ${n} closed trades — sample size is small, so flag which conclusions are tentative, but still analyze what's there.`:""}
 
-Be concise. Use short markdown sections with **bold** headers and bullet points. All P&L figures are in USD. Do not invent data not present.
+Write these markdown sections with **bold** headers and bullet points:
+
+**Verdict** — Profitable or not, and is the edge real or just luck? Justify with win rate, profit factor, expectancy, and the avg-win-to-avg-loss ratio.
+
+**What's working** — The most profitable instruments, tickers, and days, each with its dollar figure.
+
+**What's costing you** — Where losses concentrate. Name the specific tickers/instruments/days that bleed and by how much, and say whether the damage is a few big losers or many small ones (use the closedTrades list).
+
+**Risk & discipline** — Compare max drawdown to total P/L. Are losers oversized vs winners (avg loss vs avg win)? Scan the closedTrades sequence for signs of over-sizing, chasing, or revenge trading after losses.
+
+**Do this next** — 3 to 5 concrete, prioritized actions specific to THIS trader's numbers (e.g. "Stop trading X — it's −$Y across N trades"). No generic tips.
+
+All P&L figures are USD. dir is long/short; pnl is realized P/L per closed trade.
 
 DATA (JSON):
 ${JSON.stringify(data)}`;
@@ -1471,7 +1485,7 @@ ${JSON.stringify(data)}`;
 async function aiRequest(model,key,prompt){
   const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
   const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.4,maxOutputTokens:1400}})});
+    body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.5,maxOutputTokens:2600}})});
   if(!r.ok){let detail="";try{const j=await r.json();detail=(j.error&&j.error.message)||"";}catch(e){}
     // 400/403 are fatal (bad key / request / API disabled); 404/429/500/503 → try another model or retry
     throw {status:r.status,msg:`HTTP ${r.status}${detail?" — "+detail:""}`,fatal:(r.status===400||r.status===403)};}
