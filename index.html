@@ -168,14 +168,27 @@ svg.chart{width:100%;display:block;overflow:visible}
 .ai-keyrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px}
 .ai-keyrow input{flex:1 1 240px;min-width:0}
 .ai-keyrow .note{flex-basis:100%;margin-top:2px}
-.ai-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.ai-out{margin-top:14px;line-height:1.55;font-size:14px}
-.ai-out:empty{display:none}
-.ai-out h4{font-size:14px;font-weight:700;margin:14px 0 4px;color:var(--txt)}
-.ai-out ul{margin:4px 0 4px 18px;padding:0}
-.ai-out li{margin:3px 0}
-.ai-out p{margin:6px 0}
-.ai-out b{color:var(--txt)}
+.ai-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.ai-chat{display:flex;flex-direction:column;gap:10px;max-height:440px;overflow-y:auto;margin-bottom:12px;padding-right:4px}
+.ai-msg{display:flex}
+.ai-user{justify-content:flex-end}
+.ai-model{justify-content:flex-start}
+.ai-bubble{max-width:86%;padding:9px 13px;border-radius:13px;font-size:14px;line-height:1.55}
+.ai-user .ai-bubble{background:var(--green);color:var(--bg);border-bottom-right-radius:4px;white-space:pre-wrap}
+.ai-user .ai-bubble b{color:var(--bg)}
+.ai-model .ai-bubble{background:var(--panel2);border:1px solid var(--line);border-bottom-left-radius:4px}
+.ai-bubble.ai-err{background:rgba(255,82,71,.12);border-color:var(--red);color:var(--txt)}
+.ai-bubble.ai-typing{color:var(--faint);letter-spacing:1px}
+.ai-bubble h4{font-size:14px;font-weight:700;margin:12px 0 4px;color:var(--txt)}
+.ai-bubble h4:first-child{margin-top:0}
+.ai-bubble ul{margin:4px 0 4px 18px;padding:0}
+.ai-bubble li{margin:3px 0}
+.ai-bubble p{margin:6px 0}
+.ai-bubble p:first-child{margin-top:0}
+.ai-bubble p:last-child{margin-bottom:0}
+.ai-bubble b{color:var(--txt)}
+.ai-inputrow{display:flex;gap:8px;align-items:flex-end}
+.ai-inputrow textarea{flex:1;resize:vertical;min-height:38px;max-height:160px;font-family:inherit;font-size:14px;line-height:1.4}
 .gridline{stroke:var(--line);stroke-width:1}
 .crosshair{stroke:var(--faint);stroke-width:1;stroke-dasharray:3 3;pointer-events:none}
 .axislbl{fill:var(--faint);font-family:var(--mono);font-size:10px}
@@ -302,18 +315,23 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <div class="cards" id="cards"></div>
 
     <div class="panel">
-      <h3>AI Trade Analysis <span class="hint">Google Gemini · free</span></h3>
+      <h3>AI Trade Coach <span class="hint">Google Gemini · free · chat</span></h3>
       <div id="aiKeyRow" class="ai-keyrow">
         <input type="password" id="aiKey" placeholder="Paste your Google AI Studio API key" autocomplete="off">
         <button class="iconbtn" id="aiSaveKey">Save key</button>
-        <span class="note">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Stored only in this browser — never uploaded. Your trade data is sent to Google to generate the analysis.</span>
+        <span class="note">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Stored only in this browser — never uploaded. Your trade data is sent to Google to answer.</span>
+      </div>
+      <div class="ai-chat" id="aiChat" style="display:none"></div>
+      <div class="ai-inputrow">
+        <textarea id="aiInput" rows="1" placeholder="Ask anything about your trades…"></textarea>
+        <button class="iconbtn" id="aiSend">Send</button>
       </div>
       <div class="ai-controls">
-        <button class="iconbtn" id="aiAnalyze">✦ Analyze my trades</button>
+        <button class="iconbtn" id="aiAnalyze">✦ Full analysis</button>
+        <button class="iconbtn" id="aiClear" style="display:none">clear chat</button>
         <button class="iconbtn" id="aiChangeKey" style="display:none">change key</button>
         <span class="mut" id="aiStatus"></span>
       </div>
-      <div class="ai-out" id="aiOut"></div>
     </div>
 
     <div class="grid2">
@@ -1393,13 +1411,19 @@ const AI_KEY_LS="ai_gemini_key";
 // tried in order; if one is overloaded (503) or missing (404) we fall through to the next
 const AI_MODELS=["gemini-2.5-flash","gemini-2.0-flash","gemini-2.5-flash-lite","gemini-flash-latest"];
 const aiSleep=ms=>new Promise(r=>setTimeout(r,ms));
+let aiHistory=[],aiBusy=false;   // chat transcript: [{role:'user'|'model', text, _err?}]
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function aiGetKey(){try{return localStorage.getItem(AI_KEY_LS)||"";}catch(e){return "";}}
 function aiSetKey(k){try{if(k)localStorage.setItem(AI_KEY_LS,k);else localStorage.removeItem(AI_KEY_LS);}catch(e){}}
 function aiUpdateUI(){
-  const has=!!aiGetKey(),kr=$("#aiKeyRow"),ck=$("#aiChangeKey"),an=$("#aiAnalyze");
-  if(!kr)return;
-  kr.style.display=has?"none":"";ck.style.display=has?"":"none";an.disabled=!has;
+  const kr=$("#aiKeyRow");if(!kr)return;
+  const has=!!aiGetKey();
+  kr.style.display=has?"none":"";
+  $("#aiChangeKey").style.display=has?"":"none";
+  $("#aiClear").style.display=(has&&aiHistory.length)?"":"none";
+  $("#aiAnalyze").disabled=!has||aiBusy;
+  $("#aiSend").disabled=!has||aiBusy;
+  $("#aiInput").disabled=!has||aiBusy;
 }
 // tiny, safe markdown → HTML (escapes first, then a few inline/block rules)
 function aiMarkdown(md){
@@ -1451,84 +1475,105 @@ function aiBuildPayload(d){
       pnl:m2(r.pnl)}))
   };
 }
-function aiBuildPrompt(d){
+// persistent coach persona + the trader's current data, sent as system_instruction every turn
+function aiSystemInstruction(d){
   const data=aiBuildPayload(d);
   const n=data.overall.closedTrades;
-  return `You are a demanding, experienced trading coach reviewing ONE trader's complete journal, provided as JSON below. Write a detailed, specific critique that helps them improve.
+  return `You are a demanding, experienced trading coach in an ongoing chat with ONE trader. Their complete journal is provided as JSON at the end of these instructions. Help them understand and improve their trading.
 
-HARD RULES — follow all of them:
-- DO NOT just restate totals. The trader can already see their total P/L on screen. Restating it is useless. Your job is to explain WHY the number is what it is and WHAT TO CHANGE.
-- Every single claim must cite concrete values from the DATA: specific tickers, instruments, days of week, dollar amounts, the win rate, profit factor, expectancy, avg win vs avg loss, or max drawdown. No vague statements that could apply to any trader.
-- Dig into the breakdowns. pnlByTicker, pnlByInstrument, pnlByDayOfWeek and the per-trade closedTrades list are where the real insights are — find the winners and the bleeders by name and amount.
-- Be direct and critical where the numbers warrant it. Skip flattery, hedging, and filler.
-- Base everything only on the DATA; never invent trades or numbers. If something can't be judged from the data (e.g. no hold-time info), say what the trader should start tracking instead.
-${n<8?`- NOTE: only ${n} closed trades — sample size is small, so flag which conclusions are tentative, but still analyze what's there.`:""}
+HARD RULES:
+- Ground every claim in their actual DATA: specific tickers, instruments, days of week, dollar amounts, win rate, profit factor, expectancy, avg win vs avg loss, max drawdown. Never give generic advice that would apply to any trader.
+- Never just restate totals — the trader can already see those. Explain WHY and WHAT TO CHANGE.
+- Be direct and critical where the numbers warrant it. No flattery, hedging, or filler.
+- Use only the DATA; never invent trades or numbers. If something isn't in the data (e.g. hold times, entry reasons), say so and suggest what to track.
+- Keep answers focused and readable: short markdown with **bold** headers and bullet points. Match length to the question — a quick question gets a short answer.
+${n<8?`- Only ${n} closed trades so far — flag conclusions as tentative given the small sample, but still analyze what's there.`:""}
 
-Write these markdown sections with **bold** headers and bullet points:
+When the trader asks for a full analysis or review, cover: a **Verdict** (profitable or not, real edge or luck — justify with win rate, profit factor, expectancy, avg win vs avg loss); **What's working** (best instruments/tickers/days, with figures); **What's costing you** (where losses concentrate, named, and whether a few big losers or many small ones — use the closedTrades list); **Risk & discipline** (max drawdown vs total P/L, oversized losers, any revenge-trading pattern in the trade sequence); and **Do this next** (3-5 concrete, prioritized actions tied to their numbers).
 
-**Verdict** — Profitable or not, and is the edge real or just luck? Justify with win rate, profit factor, expectancy, and the avg-win-to-avg-loss ratio.
+For follow-up questions, answer just that question using the data — don't repeat the whole analysis.
 
-**What's working** — The most profitable instruments, tickers, and days, each with its dollar figure.
+All P&L is USD. dir is long/short; pnl is realized P/L per closed trade.
 
-**What's costing you** — Where losses concentrate. Name the specific tickers/instruments/days that bleed and by how much, and say whether the damage is a few big losers or many small ones (use the closedTrades list).
-
-**Risk & discipline** — Compare max drawdown to total P/L. Are losers oversized vs winners (avg loss vs avg win)? Scan the closedTrades sequence for signs of over-sizing, chasing, or revenge trading after losses.
-
-**Do this next** — 3 to 5 concrete, prioritized actions specific to THIS trader's numbers (e.g. "Stop trading X — it's −$Y across N trades"). No generic tips.
-
-All P&L figures are USD. dir is long/short; pnl is realized P/L per closed trade.
-
-DATA (JSON):
+TRADER'S JOURNAL DATA (JSON):
 ${JSON.stringify(data)}`;
 }
-// one request; returns {text} on success or throws {status, msg, fatal}
-async function aiRequest(model,key,prompt){
+// one request with system instruction + chat history; returns text or throws {status,msg,fatal}
+async function aiRequest(model,key,system,contents){
   const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.5,maxOutputTokens:2600}})});
+  const body={contents,generationConfig:{temperature:0.5,maxOutputTokens:2600}};
+  if(system)body.system_instruction={parts:[{text:system}]};
+  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   if(!r.ok){let detail="";try{const j=await r.json();detail=(j.error&&j.error.message)||"";}catch(e){}
-    // 400/403 are fatal (bad key / request / API disabled); 404/429/500/503 → try another model or retry
     throw {status:r.status,msg:`HTTP ${r.status}${detail?" — "+detail:""}`,fatal:(r.status===400||r.status===403)};}
   const j=await r.json();const cand=j.candidates&&j.candidates[0];
   const text=cand&&cand.content&&cand.content.parts?cand.content.parts.map(p=>p.text||"").join(""):"";
   if(!text)throw {status:0,msg:cand&&cand.finishReason?("no text returned ("+cand.finishReason+")"):"empty response",fatal:false};
   return text;
 }
-async function aiAnalyze(){
-  const key=aiGetKey();if(!key){aiUpdateUI();return;}
-  if(!dashData)renderDash();
-  if(!dashData||dashData.allRealized.length===0){$("#aiOut").innerHTML=`<div class="mut">No closed trades in the current filter to analyze.</div>`;return;}
-  const btn=$("#aiAnalyze"),status=$("#aiStatus"),out=$("#aiOut");
-  btn.disabled=true;out.innerHTML="";
-  const prompt=aiBuildPrompt(dashData);
+// retry each model up to 3x with backoff, fall through the model list
+async function aiComplete(key,system,contents,onStatus){
   let last="";
-  try{
-    for(const model of AI_MODELS){
-      for(let attempt=0;attempt<3;attempt++){
-        status.textContent=attempt?`busy — retrying ${model}…`:`analyzing with ${model}…`;
-        try{
-          const text=await aiRequest(model,key,prompt);
-          out.innerHTML=aiMarkdown(text);status.innerHTML=`<span class="mut">via ${model}</span>`;
-          btn.disabled=false;return;
-        }catch(e){
-          last=e&&e.msg?e.msg:String(e);
-          if(e&&e.fatal){throw e;}                 // bad key / disabled API — stop entirely
-          if(e&&e.status===404)break;              // model not available here → next model, no retry
-          await aiSleep(700*Math.pow(2,attempt)+Math.random()*300);   // transient → backoff & retry
-        }
+  for(const model of AI_MODELS){
+    for(let attempt=0;attempt<3;attempt++){
+      if(onStatus)onStatus(attempt?`busy — retrying ${model}…`:`thinking… (${model})`);
+      try{return {text:await aiRequest(model,key,system,contents),model};}
+      catch(e){
+        last=e&&e.msg?e.msg:String(e);
+        if(e&&e.fatal)throw e;                 // bad key / disabled API — stop entirely
+        if(e&&e.status===404)break;            // model unavailable here → next model, no retry
+        await aiSleep(700*Math.pow(2,attempt)+Math.random()*300);   // transient → backoff & retry
       }
     }
-    throw {msg:last||"all models busy",fatal:false};
+  }
+  throw {msg:last||"all models busy",fatal:false};
+}
+function aiRenderChat(){
+  const box=$("#aiChat");if(!box)return;
+  let h=aiHistory.map(m=>m.role==="user"
+    ? `<div class="ai-msg ai-user"><div class="ai-bubble">${esc(m.text)}</div></div>`
+    : `<div class="ai-msg ai-model"><div class="ai-bubble ${m._err?"ai-err":""}">${m._err?esc(m.text):aiMarkdown(m.text)}</div></div>`
+  ).join("");
+  if(aiBusy)h+=`<div class="ai-msg ai-model"><div class="ai-bubble ai-typing">●&nbsp;●&nbsp;●</div></div>`;
+  box.innerHTML=h;
+  box.style.display=(aiHistory.length||aiBusy)?"":"none";
+  box.scrollTop=box.scrollHeight;
+}
+async function aiSend(text){
+  const key=aiGetKey();if(!key){aiUpdateUI();return;}
+  text=String(text||"").trim();if(!text||aiBusy)return;
+  if(!dashData)renderDash();
+  aiHistory.push({role:"user",text});
+  aiBusy=true;$("#aiInput").value="";aiRenderChat();aiUpdateUI();
+  const status=$("#aiStatus");
+  try{
+    const sys=aiSystemInstruction(dashData||{allRealized:[],allPos:[],propEvents:[],totalReal:0,totalUn:0,unKnown:false,winRate:0,avgWin:0,avgLoss:0,wins:0,losses:0,from:null,to:null,instrument:instF});
+    const contents=aiHistory.map(m=>({role:m.role,parts:[{text:m.text}]}));
+    const {text:reply,model}=await aiComplete(key,sys,contents,s=>{status.textContent=s;});
+    aiHistory.push({role:"model",text:reply});
+    status.innerHTML=`<span class="mut">via ${model}</span>`;
   }catch(e){
     const msg=e&&e.msg?e.msg:String(e&&e.message||e);
     const transient=/HTTP (429|500|503)|busy/.test(msg);
+    aiHistory.push({role:"model",_err:true,text:transient
+      ? "⚠️ Google's free models are busy right now — give it a moment and send again."
+      : "⚠️ "+msg+(/HTTP 40[03]/.test(msg)?"  (Check your key at aistudio.google.com/apikey — it may be restricted or the Generative Language API isn't enabled.)":"")});
     status.textContent="";
-    out.innerHTML=`<div class="neg">Analysis failed: ${esc(msg)}</div>`+
-      (transient
-        ? `<div class="mut" style="margin-top:6px">Google's free models are temporarily overloaded — this is on their side, not your key. Wait a moment and click Analyze again.</div>`
-        : `<div class="mut" style="margin-top:6px">A 403 usually means the key is restricted or the Generative Language API isn't enabled for it; a 400 means a malformed request. Check your key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.</div>`);
-  }finally{btn.disabled=false;}
+  }finally{
+    aiBusy=false;aiRenderChat();aiUpdateUI();
+    const inp=$("#aiInput");if(inp&&!inp.disabled)inp.focus();
+  }
 }
+function aiAnalyze(){
+  if(!aiGetKey()){aiUpdateUI();return;}
+  if(!dashData)renderDash();
+  if(!dashData||dashData.allRealized.length===0){
+    aiHistory.push({role:"model",_err:true,text:"No closed trades in the current filter yet — log or close some trades, then I can analyze them."});
+    aiRenderChat();aiUpdateUI();return;
+  }
+  aiSend("Give me a full analysis of my trading so far.");
+}
+function aiClearChat(){aiHistory=[];aiBusy=false;aiRenderChat();$("#aiStatus").textContent="";aiUpdateUI();}
 
 /* ============================ TRADES TABLE ============================ */
 let editId=null;
@@ -2115,11 +2160,14 @@ function init(){
   $("#fromDate").onchange=e=>{fromD=e.target.value;renderDash();};
   $("#toDate").onchange=e=>{toD=e.target.value;renderDash();};
   $("#clearDates").onclick=()=>{fromD=toD="";$("#fromDate").value="";$("#toDate").value="";renderDash();};
-  // AI analysis (Google Gemini)
-  $("#aiSaveKey").onclick=()=>{const k=$("#aiKey").value.trim();if(!k){toast("Paste a key first",true);return;}aiSetKey(k);$("#aiKey").value="";aiUpdateUI();toast("Key saved in this browser");};
+  // AI trade coach (Google Gemini chat)
+  $("#aiSaveKey").onclick=()=>{const k=$("#aiKey").value.trim();if(!k){toast("Paste a key first",true);return;}aiSetKey(k);$("#aiKey").value="";aiUpdateUI();$("#aiInput").focus();toast("Key saved in this browser");};
   $("#aiKey").addEventListener("keydown",e=>{if(e.key==="Enter")$("#aiSaveKey").click();});
-  $("#aiChangeKey").onclick=()=>{aiSetKey("");aiUpdateUI();$("#aiOut").innerHTML="";$("#aiStatus").textContent="";};
+  $("#aiChangeKey").onclick=()=>{aiSetKey("");aiUpdateUI();$("#aiStatus").textContent="";};
   $("#aiAnalyze").onclick=aiAnalyze;
+  $("#aiClear").onclick=aiClearChat;
+  $("#aiSend").onclick=()=>aiSend($("#aiInput").value);
+  $("#aiInput").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();aiSend($("#aiInput").value);}});
   aiUpdateUI();
   $("#f-inst").onchange=()=>{$("#f-mult").dataset.auto="1";syncFormFields();};
   $("#f-sym").oninput=()=>{if($("#f-mult").dataset.auto!=="0")syncFormFields();};
