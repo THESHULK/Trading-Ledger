@@ -1390,7 +1390,9 @@ function drawDayOfWeek(events){
 
 /* ============================ AI ANALYSIS (Google Gemini) ============================ */
 const AI_KEY_LS="ai_gemini_key";
-const AI_MODEL="gemini-2.5-flash";
+// tried in order; if one is overloaded (503) or missing (404) we fall through to the next
+const AI_MODELS=["gemini-2.5-flash","gemini-2.0-flash","gemini-2.5-flash-lite","gemini-flash-latest"];
+const aiSleep=ms=>new Promise(r=>setTimeout(r,ms));
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function aiGetKey(){try{return localStorage.getItem(AI_KEY_LS)||"";}catch(e){return "";}}
 function aiSetKey(k){try{if(k)localStorage.setItem(AI_KEY_LS,k);else localStorage.removeItem(AI_KEY_LS);}catch(e){}}
@@ -1465,28 +1467,52 @@ Be concise. Use short markdown sections with **bold** headers and bullet points.
 DATA (JSON):
 ${JSON.stringify(data)}`;
 }
+// one request; returns {text} on success or throws {status, msg, fatal}
+async function aiRequest(model,key,prompt){
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.4,maxOutputTokens:1400}})});
+  if(!r.ok){let detail="";try{const j=await r.json();detail=(j.error&&j.error.message)||"";}catch(e){}
+    // 400/403 are fatal (bad key / request / API disabled); 404/429/500/503 → try another model or retry
+    throw {status:r.status,msg:`HTTP ${r.status}${detail?" — "+detail:""}`,fatal:(r.status===400||r.status===403)};}
+  const j=await r.json();const cand=j.candidates&&j.candidates[0];
+  const text=cand&&cand.content&&cand.content.parts?cand.content.parts.map(p=>p.text||"").join(""):"";
+  if(!text)throw {status:0,msg:cand&&cand.finishReason?("no text returned ("+cand.finishReason+")"):"empty response",fatal:false};
+  return text;
+}
 async function aiAnalyze(){
   const key=aiGetKey();if(!key){aiUpdateUI();return;}
   if(!dashData)renderDash();
   if(!dashData||dashData.allRealized.length===0){$("#aiOut").innerHTML=`<div class="mut">No closed trades in the current filter to analyze.</div>`;return;}
   const btn=$("#aiAnalyze"),status=$("#aiStatus"),out=$("#aiOut");
-  btn.disabled=true;status.textContent="analyzing…";out.innerHTML="";
+  btn.disabled=true;out.innerHTML="";
+  const prompt=aiBuildPrompt(dashData);
+  let last="";
   try{
-    const url=`https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:generateContent?key=${encodeURIComponent(key)}`;
-    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({contents:[{parts:[{text:aiBuildPrompt(dashData)}]}],generationConfig:{temperature:0.4,maxOutputTokens:1400}})});
-    if(!r.ok){let detail="";try{const j=await r.json();detail=(j.error&&j.error.message)||"";}catch(e){}
-      throw new Error(`HTTP ${r.status}${detail?" — "+detail:""}`);}
-    const j=await r.json();
-    const cand=j.candidates&&j.candidates[0];
-    const text=cand&&cand.content&&cand.content.parts?cand.content.parts.map(p=>p.text||"").join(""):"";
-    if(!text){throw new Error(cand&&cand.finishReason?("no text returned ("+cand.finishReason+")"):"empty response");}
-    out.innerHTML=aiMarkdown(text);
-    status.innerHTML=`<span class="mut">via ${AI_MODEL}</span>`;
+    for(const model of AI_MODELS){
+      for(let attempt=0;attempt<3;attempt++){
+        status.textContent=attempt?`busy — retrying ${model}…`:`analyzing with ${model}…`;
+        try{
+          const text=await aiRequest(model,key,prompt);
+          out.innerHTML=aiMarkdown(text);status.innerHTML=`<span class="mut">via ${model}</span>`;
+          btn.disabled=false;return;
+        }catch(e){
+          last=e&&e.msg?e.msg:String(e);
+          if(e&&e.fatal){throw e;}                 // bad key / disabled API — stop entirely
+          if(e&&e.status===404)break;              // model not available here → next model, no retry
+          await aiSleep(700*Math.pow(2,attempt)+Math.random()*300);   // transient → backoff & retry
+        }
+      }
+    }
+    throw {msg:last||"all models busy",fatal:false};
   }catch(e){
+    const msg=e&&e.msg?e.msg:String(e&&e.message||e);
+    const transient=/HTTP (429|500|503)|busy/.test(msg);
     status.textContent="";
-    out.innerHTML=`<div class="neg">Analysis failed: ${esc(String(e.message||e))}</div>`+
-      `<div class="mut" style="margin-top:6px">Check that the key is valid and the Generative Language API is enabled for it. A 403/CORS error usually means the key is restricted or the API isn't enabled.</div>`;
+    out.innerHTML=`<div class="neg">Analysis failed: ${esc(msg)}</div>`+
+      (transient
+        ? `<div class="mut" style="margin-top:6px">Google's free models are temporarily overloaded — this is on their side, not your key. Wait a moment and click Analyze again.</div>`
+        : `<div class="mut" style="margin-top:6px">A 403 usually means the key is restricted or the Generative Language API isn't enabled for it; a 400 means a malformed request. Check your key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.</div>`);
   }finally{btn.disabled=false;}
 }
 
