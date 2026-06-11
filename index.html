@@ -167,6 +167,8 @@ svg.chart{width:100%;display:block;overflow:visible}
 .statgrid .st{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 .statgrid .st .k{color:var(--faint);font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase}
 .statgrid .st .v{font-family:var(--mono);font-size:14px;font-weight:700;margin-top:2px}
+.demoswitch{display:inline-flex;align-items:center;gap:9px;font-size:14px;font-weight:600;cursor:pointer;margin-top:10px;color:var(--txt)}
+.demoswitch input{width:18px;height:18px;accent-color:var(--green);cursor:pointer}
 .ai-provider-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px}
 .ai-provider-row label{font-size:13px;color:var(--muted);display:flex;align-items:center}
 .ai-provider-row select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:13px}
@@ -514,6 +516,11 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
   <!-- DATA -->
   <section class="view" id="view-data">
     <div class="panel">
+      <h3>Demo data</h3>
+      <p class="note">Curious what the app looks like full of trades? Flip this on to load a sample portfolio that populates every tab and chart. <b>Your own data is kept safe</b> and returns the moment you switch it off — nothing is saved to this browser or synced to Drive while demo data is showing.</p>
+      <label class="demoswitch"><input type="checkbox" id="demoToggle"><span>Show demo data</span></label>
+    </div>
+    <div class="panel">
       <h3>Import CSV</h3>
       <p class="note">
         Expected columns (header row, any order, case-insensitive):<br>
@@ -694,6 +701,7 @@ function migrateFutures(){
 /* ============================ STATE ============================ */
 const LS_KEY="tape.v1";
 let state={trades:[],marks:{},spreads:[],propfirm:[],seq:0,updatedAt:0};
+let demoMode=false,demoBackup=null;   // demo preview never persists to storage or Drive
 const FS_OK = typeof window.showSaveFilePicker==="function";
 let fileHandle=null, fileName="", fileConnected=false, fileWriteTimer=null;
 
@@ -702,11 +710,52 @@ function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;sta
 
 function load(){try{const r=localStorage.getItem(LS_KEY);if(r)applyParsed(JSON.parse(r));}catch(e){}}
 function save(){
+  if(demoMode)return;   // never persist demo data or edits made while previewing it
   if(!applyingRemote)state.updatedAt=Date.now();
   try{localStorage.setItem(LS_KEY,serialize());}catch(e){toast("Browser storage blocked",true);}
   if(fileConnected)scheduleFileWrite();
   if(driveConnected&&!applyingRemote)scheduleDriveWrite();
   flashSaved();
+}
+/* ---- demo data (preview only; never persisted) ---- */
+function buildDemoState(){
+  const dAgo=n=>{const d=new Date();d.setDate(d.getDate()-n);return d.toISOString().slice(0,10);};
+  let seq=1;const trades=[];
+  const push=o=>{trades.push(Object.assign({id:"demo"+seq,_seq:seq,account:"Main",fees:1},o));seq++;};
+  const stk=(sym,d1,p1,d2,p2,q,acct)=>{push({date:dAgo(d1),instrument:"stock",symbol:sym,action:"buy",quantity:q,price:p1,multiplier:1,account:acct});push({date:dAgo(d2),instrument:"stock",symbol:sym,action:"sell",quantity:q,price:p2,multiplier:1,account:acct});};
+  stk("AAPL",125,180,112,192,100,"Main");  stk("TSLA",104,240,97,262,50,"Main");
+  stk("NVDA",84,110,72,128,30,"Main");      stk("MSFT",52,400,46,415,40,"Roth");
+  stk("AAPL",61,195,55,188,100,"Main");     stk("TSLA",41,250,38,233,50,"Main");
+  stk("AMD",34,150,30,142,80,"Roth");
+  push({date:dAgo(20),instrument:"stock",symbol:"NVDA",action:"buy",quantity:25,price:120,multiplier:1});
+  push({date:dAgo(14),instrument:"stock",symbol:"SPY",action:"buy",quantity:50,price:540,multiplier:1});
+  const opt=(sym,exp,strike,typ,d1,p1,d2,p2,q)=>{const b={instrument:"option",symbol:sym,expiry:exp,strike,optionType:typ,multiplier:100};push(Object.assign({date:dAgo(d1),action:"buy",quantity:q,price:p1},b));push(Object.assign({date:dAgo(d2),action:"sell",quantity:q,price:p2},b));};
+  opt("SPY",dAgo(-21),545,"call",46,3.20,42,4.10,5);  opt("AAPL",dAgo(-14),190,"call",22,2.10,12,3.00,4);  opt("TSLA",dAgo(-7),230,"put",31,5.00,25,3.20,3);
+  const fut=(sym,dir,d,entry,exit,q,fees)=>{push({date:dAgo(d),instrument:"future",symbol:sym,direction:dir,quantity:q,entry,exit,multiplier:FUTURES_PRESETS[sym]||1,fees});};
+  fut("ES","long",70,5200,5218,1,4);  fut("ES","long",31,5300,5288,1,4);  fut("MNQ","short",48,18500,18300,1,2);
+  push({date:dAgo(9),instrument:"future",symbol:"MES",direction:"long",quantity:1,entry:5260,exit:null,multiplier:FUTURES_PRESETS["MES"]||5,fees:0});
+  let sseq=1;const spreads=[];
+  const sp=o=>{spreads.push(Object.assign({id:"demosp"+sseq,account:"Main"},o));sseq++;};
+  sp({type:"PCS",symbol:"SPY",expiry:dAgo(-25),quantity:2,dateOpened:dAgo(50),dateClosed:dAgo(20),fees:2,status:"closed",
+    legs:[{side:"short",optionType:"put",strike:535,open:1.50,close:0.30},{side:"long",optionType:"put",strike:530,open:0.60,close:0.10}]});
+  sp({type:"CCS",symbol:"QQQ",expiry:dAgo(-18),quantity:3,dateOpened:dAgo(44),dateClosed:dAgo(16),fees:3,status:"closed",
+    legs:[{side:"short",optionType:"call",strike:470,open:2.00,close:3.50},{side:"long",optionType:"call",strike:475,open:1.00,close:2.20}]});
+  sp({type:"CSP",symbol:"AAPL",expiry:dAgo(-28),quantity:1,dateOpened:dAgo(10),dateClosed:"",fees:1,status:"open",
+    legs:[{side:"short",optionType:"put",strike:180,open:2.50,close:null}]});
+  sp({type:"PCS",symbol:"TSLA",expiry:dAgo(-21),quantity:2,dateOpened:dAgo(8),dateClosed:"",fees:2,status:"open",
+    legs:[{side:"short",optionType:"put",strike:220,open:3.00,close:null},{side:"long",optionType:"put",strike:215,open:1.20,close:null}]});
+  const propfirm=[{id:"demopf1",date:dAgo(115),amount:-150,type:"Eval purchase"},{id:"demopf2",date:dAgo(62),amount:-80,type:"Reset"},
+    {id:"demopf3",date:dAgo(40),amount:1200,type:"Payout"},{id:"demopf4",date:dAgo(12),amount:2300,type:"Payout"}];
+  return {trades,spreads,propfirm,marks:{"STK:NVDA":135,"STK:SPY":548},seq,updatedAt:Date.now()};
+}
+function setDemo(on){
+  on=!!on;if(on===demoMode)return;
+  if(on){demoBackup=serialize();demoMode=true;state=buildDemoState();}
+  else{const b=demoBackup;demoBackup=null;demoMode=false;if(b){applyingRemote=true;try{applyParsed(JSON.parse(b));}catch(e){}applyingRemote=false;}}
+  const tg=$("#demoToggle");if(tg)tg.checked=demoMode;
+  refreshAll();
+  const st=document.getElementById("savedTxt");if(st)st.textContent=demoMode?"demo data (not saved)":settledSavedText();
+  toast(demoMode?"Showing demo data — your real data is safe and returns when you switch off":"Back to your own data");
 }
 function settledSavedText(){return driveConnected?"☁ Google Drive":(fileConnected?("→ "+fileName):"saved locally");}
 function flashSaved(){const t=document.getElementById("savedTxt");if(!t)return;
@@ -785,7 +834,7 @@ async function driveUpload(){
   return driveCreate();
 }
 async function driveSync(){
-  if(!driveConnected||driveBusy)return;
+  if(!driveConnected||driveBusy||demoMode)return;
   driveBusy=true;updateDriveUI("syncing…");
   try{
     await driveFindFile();
@@ -801,7 +850,7 @@ async function driveSync(){
   finally{driveBusy=false;}
 }
 function scheduleDriveWrite(){
-  if(!driveConnected)return;clearTimeout(driveWriteTimer);
+  if(!driveConnected||demoMode)return;clearTimeout(driveWriteTimer);
   driveWriteTimer=setTimeout(async()=>{
     if(driveBusy)return;driveBusy=true;updateDriveUI("saving…");
     try{if(gFileId===null)await driveFindFile();await driveUpload();driveLastSync=Date.now();}
@@ -865,7 +914,7 @@ async function idbDel(k){const db=await idb();return new Promise((res)=>{
   const tx=db.transaction("kv","readwrite");tx.objectStore("kv").delete(k);tx.oncomplete=()=>res();});}
 
 /* ---- debounced writes to the real file ---- */
-function scheduleFileWrite(){clearTimeout(fileWriteTimer);fileWriteTimer=setTimeout(writeFile,400);}
+function scheduleFileWrite(){if(demoMode)return;clearTimeout(fileWriteTimer);fileWriteTimer=setTimeout(writeFile,400);}
 async function writeFile(){
   if(!fileHandle)return;
   try{const w=await fileHandle.createWritable();await w.write(serialize());await w.close();}
@@ -2270,6 +2319,7 @@ function init(){
   $("#csvFile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
     rd.onload=()=>importCSV(rd.result);rd.readAsText(f);e.target.value="";};
   $("#csvTemplate").onclick=csvTemplate;
+  $("#demoToggle").onchange=e=>setDemo(e.target.checked);
   $("#expJson").onclick=exportJSON;$("#expCsv").onclick=exportCSV;
   $("#impJson").onclick=()=>$("#jsonFile").click();
   $("#jsonFile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
