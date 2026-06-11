@@ -165,8 +165,12 @@ svg.chart{width:100%;display:block;overflow:visible}
 .statgrid .st{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 .statgrid .st .k{color:var(--faint);font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase}
 .statgrid .st .v{font-family:var(--mono);font-size:14px;font-weight:700;margin-top:2px}
+.ai-provider-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px}
+.ai-provider-row label{font-size:13px;color:var(--muted);display:flex;align-items:center}
+.ai-provider-row select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:13px}
 .ai-keyrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px}
-.ai-keyrow input{flex:1 1 240px;min-width:0}
+.ai-keyrow input[type=password]{flex:2 1 220px;min-width:0}
+.ai-keyrow .ai-modelin{flex:1 1 160px;min-width:0}
 .ai-keyrow .note{flex-basis:100%;margin-top:2px}
 .ai-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
 .ai-chat{display:flex;flex-direction:column;gap:10px;max-height:440px;overflow-y:auto;margin-bottom:12px;padding-right:4px}
@@ -315,11 +319,24 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <div class="cards" id="cards"></div>
 
     <div class="panel">
-      <h3>AI Trade Coach <span class="hint">Google Gemini · free · chat</span></h3>
+      <h3>AI Trade Coach <span class="hint">chat · your choice of AI</span></h3>
+      <div class="ai-provider-row">
+        <label>AI&nbsp;
+          <select id="aiProvider">
+            <option value="gemini">Google Gemini · free</option>
+            <option value="openrouter">OpenRouter · free + paid</option>
+            <option value="openai">OpenAI · paid</option>
+            <option value="anthropic">Anthropic Claude · paid</option>
+          </select>
+        </label>
+        <span class="mut" id="aiModelTag"></span>
+        <button class="iconbtn" id="aiChangeKey" style="display:none">change key / model</button>
+      </div>
       <div id="aiKeyRow" class="ai-keyrow">
-        <input type="password" id="aiKey" placeholder="Paste your Google AI Studio API key" autocomplete="off">
-        <button class="iconbtn" id="aiSaveKey">Save key</button>
-        <span class="note">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Stored only in this browser — never uploaded. Your trade data is sent to Google to answer.</span>
+        <input type="password" id="aiKey" placeholder="API key" autocomplete="off">
+        <input type="text" id="aiModel" class="ai-modelin" placeholder="model (optional)" autocomplete="off">
+        <button class="iconbtn" id="aiSaveKey">Save</button>
+        <span class="note" id="aiKeyNote"></span>
       </div>
       <div class="ai-chat" id="aiChat" style="display:none"></div>
       <div class="ai-inputrow">
@@ -329,7 +346,6 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <div class="ai-controls">
         <button class="iconbtn" id="aiAnalyze">✦ Full analysis</button>
         <button class="iconbtn" id="aiClear" style="display:none">clear chat</button>
-        <button class="iconbtn" id="aiChangeKey" style="display:none">change key</button>
         <span class="mut" id="aiStatus"></span>
       </div>
     </div>
@@ -1407,23 +1423,68 @@ function drawDayOfWeek(events){
 }
 
 /* ============================ AI ANALYSIS (Google Gemini) ============================ */
-const AI_KEY_LS="ai_gemini_key";
-// tried in order; if one is overloaded (503) or missing (404) we fall through to the next
-const AI_MODELS=["gemini-2.5-flash","gemini-2.0-flash","gemini-2.5-flash-lite","gemini-flash-latest"];
 const aiSleep=ms=>new Promise(r=>setTimeout(r,ms));
-let aiHistory=[],aiBusy=false;   // chat transcript: [{role:'user'|'model', text, _err?}]
+let aiHistory=[],aiBusy=false,aiEditing=false;   // chat transcript: [{role:'user'|'model', text, _err?}]
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
-function aiGetKey(){try{return localStorage.getItem(AI_KEY_LS)||"";}catch(e){return "";}}
-function aiSetKey(k){try{if(k)localStorage.setItem(AI_KEY_LS,k);else localStorage.removeItem(AI_KEY_LS);}catch(e){}}
+// internal history role 'model' maps to 'assistant' for OpenAI/Anthropic-style APIs
+function aiMsgs(sys,hist){return [{role:"system",content:sys}].concat(hist.map(x=>({role:x.role==="model"?"assistant":"user",content:x.text})));}
+// Provider registry. Each builds the request and extracts the reply; chat logic stays the same.
+const AI_PROVIDERS={
+  gemini:{label:"Google Gemini · free",keyHost:"aistudio.google.com/apikey",keyUrl:"https://aistudio.google.com/apikey",
+    models:["gemini-2.5-flash","gemini-2.0-flash","gemini-2.5-flash-lite","gemini-flash-latest"],note:"Free tier, works great from the browser.",
+    endpoint:(m,k)=>`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(k)}`,
+    headers:()=>({"Content-Type":"application/json"}),
+    body:(m,sys,hist)=>({system_instruction:{parts:[{text:sys}]},contents:hist.map(x=>({role:x.role,parts:[{text:x.text}]})),generationConfig:{temperature:0.5,maxOutputTokens:2600}}),
+    extract:j=>{const c=j.candidates&&j.candidates[0];return c&&c.content&&c.content.parts?c.content.parts.map(p=>p.text||"").join(""):"";},
+    err:j=>j&&j.error&&j.error.message},
+  openrouter:{label:"OpenRouter · free + paid",keyHost:"openrouter.ai/keys",keyUrl:"https://openrouter.ai/keys",
+    models:["deepseek/deepseek-chat-v3-0324:free","meta-llama/llama-3.3-70b-instruct:free"],note:"Browser-friendly. Pick any model id from openrouter.ai/models (\":free\" ones cost nothing).",
+    endpoint:()=>"https://openrouter.ai/api/v1/chat/completions",
+    headers:k=>({"Content-Type":"application/json","Authorization":"Bearer "+k}),
+    body:(m,sys,hist)=>({model:m,messages:aiMsgs(sys,hist),temperature:0.5,max_tokens:2600}),
+    extract:j=>j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content||"",
+    err:j=>j&&j.error&&(j.error.message||j.error)},
+  openai:{label:"OpenAI · paid",keyHost:"platform.openai.com/api-keys",keyUrl:"https://platform.openai.com/api-keys",
+    models:["gpt-4o-mini"],note:"Uses your OpenAI key. gpt-4o-mini is cheapest; gpt-4o is stronger.",
+    endpoint:()=>"https://api.openai.com/v1/chat/completions",
+    headers:k=>({"Content-Type":"application/json","Authorization":"Bearer "+k}),
+    body:(m,sys,hist)=>({model:m,messages:aiMsgs(sys,hist),temperature:0.5,max_tokens:2600}),
+    extract:j=>j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content||"",
+    err:j=>j&&j.error&&j.error.message},
+  anthropic:{label:"Anthropic Claude · paid",keyHost:"console.anthropic.com",keyUrl:"https://console.anthropic.com/settings/keys",
+    models:["claude-opus-4-8"],note:"Strongest analysis. Cheaper option: type claude-haiku-4-5 in the model box.",
+    endpoint:()=>"https://api.anthropic.com/v1/messages",
+    headers:k=>({"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"}),
+    body:(m,sys,hist)=>({model:m,max_tokens:2600,system:sys,messages:hist.map(x=>({role:x.role==="model"?"assistant":"user",content:x.text}))}),
+    extract:j=>j.content&&j.content.map(b=>b.type==="text"?b.text:"").join("")||"",
+    err:j=>j&&j.error&&j.error.message}
+};
+function aiProv(){try{return AI_PROVIDERS[localStorage.getItem("ai_provider")]?localStorage.getItem("ai_provider"):"gemini";}catch(e){return "gemini";}}
+function aiSetProv(p){try{localStorage.setItem("ai_provider",p);}catch(e){}}
+function aiKeyOf(p){try{return localStorage.getItem("ai_key_"+p)||"";}catch(e){return "";}}
+function aiSetKeyOf(p,k){try{if(k)localStorage.setItem("ai_key_"+p,k);else localStorage.removeItem("ai_key_"+p);}catch(e){}}
+function aiModelOf(p){try{return localStorage.getItem("ai_model_"+p)||"";}catch(e){return "";}}
+function aiSetModelOf(p,m){try{if(m)localStorage.setItem("ai_model_"+p,m);else localStorage.removeItem("ai_model_"+p);}catch(e){}}
+function aiModels(p){const o=aiModelOf(p);return o?[o]:AI_PROVIDERS[p].models.slice();}
 function aiUpdateUI(){
-  const kr=$("#aiKeyRow");if(!kr)return;
-  const has=!!aiGetKey();
-  kr.style.display=has?"none":"";
-  $("#aiChangeKey").style.display=has?"":"none";
-  $("#aiClear").style.display=(has&&aiHistory.length)?"":"none";
-  $("#aiAnalyze").disabled=!has||aiBusy;
-  $("#aiSend").disabled=!has||aiBusy;
-  $("#aiInput").disabled=!has||aiBusy;
+  if(!$("#aiInput"))return;
+  const has=!!aiKeyOf(aiProv()),dis=!has||aiBusy;
+  $("#aiClear").style.display=aiHistory.length?"":"none";
+  $("#aiAnalyze").disabled=dis;$("#aiSend").disabled=dis;$("#aiInput").disabled=dis;
+}
+// reflect the selected provider in the setup row (key field, model placeholder, note, show/hide)
+function aiSyncProvider(){
+  const sel=$("#aiProvider");if(!sel)return;
+  const p=aiProv(),P=AI_PROVIDERS[p],has=!!aiKeyOf(p),editing=aiEditing||!has;
+  sel.value=p;
+  $("#aiKey").placeholder=P.keyHost.split("/")[0]+" API key";
+  $("#aiModel").placeholder=P.models[0]+" (default)";
+  $("#aiKeyNote").innerHTML=`Key from <a href="${P.keyUrl}" target="_blank" rel="noopener">${P.keyHost}</a> — stored only in this browser, never uploaded. ${P.note} Your trade data is sent to this provider to answer.`;
+  $("#aiModelTag").textContent=has&&!editing?("model: "+(aiModelOf(p)||P.models[0])):"";
+  $("#aiKeyRow").style.display=editing?"":"none";
+  $("#aiChangeKey").style.display=(has&&!editing)?"":"none";
+  if(editing){$("#aiKey").value=aiKeyOf(p);$("#aiModel").value=aiModelOf(p);}
+  aiUpdateUI();
 }
 // tiny, safe markdown → HTML (escapes first, then a few inline/block rules)
 function aiMarkdown(md){
@@ -1498,30 +1559,28 @@ All P&L is USD. dir is long/short; pnl is realized P/L per closed trade.
 TRADER'S JOURNAL DATA (JSON):
 ${JSON.stringify(data)}`;
 }
-// one request with system instruction + chat history; returns text or throws {status,msg,fatal}
-async function aiRequest(model,key,system,contents){
-  const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-  const body={contents,generationConfig:{temperature:0.5,maxOutputTokens:2600}};
-  if(system)body.system_instruction={parts:[{text:system}]};
-  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  if(!r.ok){let detail="";try{const j=await r.json();detail=(j.error&&j.error.message)||"";}catch(e){}
-    throw {status:r.status,msg:`HTTP ${r.status}${detail?" — "+detail:""}`,fatal:(r.status===400||r.status===403)};}
-  const j=await r.json();const cand=j.candidates&&j.candidates[0];
-  const text=cand&&cand.content&&cand.content.parts?cand.content.parts.map(p=>p.text||"").join(""):"";
-  if(!text)throw {status:0,msg:cand&&cand.finishReason?("no text returned ("+cand.finishReason+")"):"empty response",fatal:false};
+// one request to the given provider/model; returns text or throws {status,msg,fatal}
+async function aiRequest(prov,model,key,system,hist){
+  const P=AI_PROVIDERS[prov];
+  const r=await fetch(P.endpoint(model,key),{method:"POST",headers:P.headers(key),body:JSON.stringify(P.body(model,system,hist))});
+  if(!r.ok){let detail="";try{detail=P.err(await r.json())||"";}catch(e){}
+    // 400/401/403 are fatal (bad key / request / no access); 404/429/5xx → try another model or retry
+    throw {status:r.status,msg:`HTTP ${r.status}${detail?" — "+detail:""}`,fatal:(r.status===400||r.status===401||r.status===403)};}
+  const text=P.extract(await r.json());
+  if(!text)throw {status:0,msg:"empty response",fatal:false};
   return text;
 }
-// retry each model up to 3x with backoff, fall through the model list
-async function aiComplete(key,system,contents,onStatus){
+// retry each model up to 3x with backoff, fall through the provider's model list
+async function aiComplete(prov,key,system,hist,onStatus){
   let last="";
-  for(const model of AI_MODELS){
+  for(const model of aiModels(prov)){
     for(let attempt=0;attempt<3;attempt++){
       if(onStatus)onStatus(attempt?`busy — retrying ${model}…`:`thinking… (${model})`);
-      try{return {text:await aiRequest(model,key,system,contents),model};}
+      try{return {text:await aiRequest(prov,model,key,system,hist),model};}
       catch(e){
         last=e&&e.msg?e.msg:String(e);
-        if(e&&e.fatal)throw e;                 // bad key / disabled API — stop entirely
-        if(e&&e.status===404)break;            // model unavailable here → next model, no retry
+        if(e&&e.fatal)throw e;                 // bad key / no access — stop entirely
+        if(e&&e.status===404)break;            // model unavailable → next model, no retry
         await aiSleep(700*Math.pow(2,attempt)+Math.random()*300);   // transient → backoff & retry
       }
     }
@@ -1540,7 +1599,7 @@ function aiRenderChat(){
   box.scrollTop=box.scrollHeight;
 }
 async function aiSend(text){
-  const key=aiGetKey();if(!key){aiUpdateUI();return;}
+  const prov=aiProv(),key=aiKeyOf(prov);if(!key){aiSyncProvider();return;}
   text=String(text||"").trim();if(!text||aiBusy)return;
   if(!dashData)renderDash();
   aiHistory.push({role:"user",text});
@@ -1548,16 +1607,20 @@ async function aiSend(text){
   const status=$("#aiStatus");
   try{
     const sys=aiSystemInstruction(dashData||{allRealized:[],allPos:[],propEvents:[],totalReal:0,totalUn:0,unKnown:false,winRate:0,avgWin:0,avgLoss:0,wins:0,losses:0,from:null,to:null,instrument:instF});
-    const contents=aiHistory.map(m=>({role:m.role,parts:[{text:m.text}]}));
-    const {text:reply,model}=await aiComplete(key,sys,contents,s=>{status.textContent=s;});
+    const {text:reply,model}=await aiComplete(prov,key,sys,aiHistory,s=>{status.textContent=s;});
     aiHistory.push({role:"model",text:reply});
     status.innerHTML=`<span class="mut">via ${model}</span>`;
   }catch(e){
     const msg=e&&e.msg?e.msg:String(e&&e.message||e);
     const transient=/HTTP (429|500|503)|busy/.test(msg);
+    const cors=/Failed to fetch|NetworkError|Load failed|CORS/i.test(msg);
+    let hint="";
+    if(transient)hint="";
+    else if(cors)hint="  (This provider may block direct browser calls. Gemini and OpenRouter work best from a static page.)";
+    else if(/HTTP 40[013]/.test(msg))hint="  (Check the API key for this provider, and that the model id is valid.)";
     aiHistory.push({role:"model",_err:true,text:transient
-      ? "⚠️ Google's free models are busy right now — give it a moment and send again."
-      : "⚠️ "+msg+(/HTTP 40[03]/.test(msg)?"  (Check your key at aistudio.google.com/apikey — it may be restricted or the Generative Language API isn't enabled.)":"")});
+      ? "⚠️ The model is busy right now — give it a moment and send again."
+      : "⚠️ "+msg+hint});
     status.textContent="";
   }finally{
     aiBusy=false;aiRenderChat();aiUpdateUI();
@@ -1565,7 +1628,7 @@ async function aiSend(text){
   }
 }
 function aiAnalyze(){
-  if(!aiGetKey()){aiUpdateUI();return;}
+  if(!aiKeyOf(aiProv())){aiSyncProvider();return;}
   if(!dashData)renderDash();
   if(!dashData||dashData.allRealized.length===0){
     aiHistory.push({role:"model",_err:true,text:"No closed trades in the current filter yet — log or close some trades, then I can analyze them."});
@@ -2160,15 +2223,19 @@ function init(){
   $("#fromDate").onchange=e=>{fromD=e.target.value;renderDash();};
   $("#toDate").onchange=e=>{toD=e.target.value;renderDash();};
   $("#clearDates").onclick=()=>{fromD=toD="";$("#fromDate").value="";$("#toDate").value="";renderDash();};
-  // AI trade coach (Google Gemini chat)
-  $("#aiSaveKey").onclick=()=>{const k=$("#aiKey").value.trim();if(!k){toast("Paste a key first",true);return;}aiSetKey(k);$("#aiKey").value="";aiUpdateUI();$("#aiInput").focus();toast("Key saved in this browser");};
+  // AI trade coach (multi-provider chat)
+  try{const old=localStorage.getItem("ai_gemini_key");if(old&&!localStorage.getItem("ai_key_gemini"))localStorage.setItem("ai_key_gemini",old);}catch(e){}  // migrate single-provider key
+  $("#aiProvider").onchange=()=>{aiSetProv($("#aiProvider").value);aiEditing=false;aiSyncProvider();};
+  $("#aiSaveKey").onclick=()=>{const p=aiProv(),k=$("#aiKey").value.trim();if(!k){toast("Paste a key first",true);return;}
+    aiSetKeyOf(p,k);aiSetModelOf(p,$("#aiModel").value.trim());aiEditing=false;aiSyncProvider();$("#aiInput").focus();toast("Saved in this browser");};
   $("#aiKey").addEventListener("keydown",e=>{if(e.key==="Enter")$("#aiSaveKey").click();});
-  $("#aiChangeKey").onclick=()=>{aiSetKey("");aiUpdateUI();$("#aiStatus").textContent="";};
+  $("#aiModel").addEventListener("keydown",e=>{if(e.key==="Enter")$("#aiSaveKey").click();});
+  $("#aiChangeKey").onclick=()=>{aiEditing=true;aiSyncProvider();$("#aiKey").focus();};
   $("#aiAnalyze").onclick=aiAnalyze;
   $("#aiClear").onclick=aiClearChat;
   $("#aiSend").onclick=()=>aiSend($("#aiInput").value);
   $("#aiInput").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();aiSend($("#aiInput").value);}});
-  aiUpdateUI();
+  aiSyncProvider();
   $("#f-inst").onchange=()=>{$("#f-mult").dataset.auto="1";syncFormFields();};
   $("#f-sym").oninput=()=>{if($("#f-mult").dataset.auto!=="0")syncFormFields();};
   $("#f-mult").oninput=()=>{$("#f-mult").dataset.auto="0";};
