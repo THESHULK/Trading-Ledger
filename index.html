@@ -84,6 +84,8 @@ header{
   background:linear-gradient(180deg,rgba(20,24,28,.9),rgba(10,12,14,.6));
   backdrop-filter:blur(6px);position:sticky;top:0;z-index:50;
 }
+/* the gradient above is dark; on the light theme use a light bar so var(--txt)/var(--muted) stay readable */
+[data-theme="light"] header{background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(236,239,242,.72))}
 .brand{display:flex;align-items:baseline;gap:10px}
 .brand b{font-size:20px;font-weight:800;letter-spacing:-.02em}
 .brand .tick{color:var(--green);font-family:var(--mono);font-size:11px;
