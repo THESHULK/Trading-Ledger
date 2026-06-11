@@ -196,7 +196,8 @@ svg.chart{width:100%;display:block;overflow:visible}
 .ai-bubble p:last-child{margin-bottom:0}
 .ai-bubble b{color:var(--txt)}
 .ai-inputrow{display:flex;gap:8px;align-items:flex-end}
-.ai-inputrow textarea{flex:1;resize:vertical;min-height:38px;max-height:160px;font-family:inherit;font-size:14px;line-height:1.4}
+.ai-inputrow textarea{flex:1;resize:vertical;min-height:38px;max-height:160px;font-family:inherit;font-size:14px;line-height:1.4;background:var(--bg2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px 10px;outline:none;transition:border-color .15s}
+.ai-inputrow textarea:focus{border-color:var(--green-dim)}
 .gridline{stroke:var(--line);stroke-width:1}
 .crosshair{stroke:var(--faint);stroke-width:1;stroke-dasharray:3 3;pointer-events:none}
 .axislbl{fill:var(--faint);font-family:var(--mono);font-size:10px}
@@ -343,7 +344,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <div class="panel">
       <h3>AI Trade Coach <span class="hint">chat · your choice of AI</span></h3>
       <div class="ai-provider-row">
-        <label>AI&nbsp;
+        <label>
           <select id="aiProvider">
             <option value="gemini">Google Gemini · free</option>
             <option value="openrouter">OpenRouter · free + paid</option>
