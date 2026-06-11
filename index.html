@@ -835,11 +835,12 @@ function requestToken(interactive){
   });
 }
 async function ensureToken(interactive){if(gToken&&Date.now()<gTokenExp)return gToken;return requestToken(interactive);}
+function tokenValid(){return !!gToken&&Date.now()<gTokenExp;}
 async function driveApi(url,opts={}){
   if(!gToken||Date.now()>=gTokenExp)await ensureToken(false);
   opts.headers=Object.assign({Authorization:"Bearer "+gToken},opts.headers||{});
   let r=await fetch(url,opts);
-  if(r.status===401){gToken=null;await ensureToken(true);opts.headers.Authorization="Bearer "+gToken;r=await fetch(url,opts);}
+  if(r.status===401){gToken=null;clearToken();await ensureToken(false);opts.headers.Authorization="Bearer "+gToken;r=await fetch(url,opts);}
   return r;
 }
 async function driveFindFile(){
@@ -895,7 +896,8 @@ function scheduleDriveWrite(){
     finally{driveBusy=false;updateDriveUI();}
   },1500);
 }
-function startDriveAuto(){clearInterval(driveAutoTimer);driveAutoTimer=setInterval(()=>{if(driveConnected&&!document.hidden)driveSync();},120000);}
+// background sync only runs while a valid token is already in hand — never force a refresh (and its popup) while idle
+function startDriveAuto(){clearInterval(driveAutoTimer);driveAutoTimer=setInterval(()=>{if(driveConnected&&!document.hidden&&tokenValid())driveSync();},120000);}
 async function driveConnect(){
   if(!driveConfigured()){toast("Cloud sync isn't configured yet",true);return;}
   if(!gisReady()){toast("Google sign-in still loading — try again",true);return;}
