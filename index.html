@@ -261,6 +261,24 @@ tbody tr:last-child td{border-bottom:0}
   opacity:0;transition:.25s;z-index:100;box-shadow:0 8px 30px rgba(0,0,0,.6)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.err{border-color:var(--red-dim);color:var(--red)}
+/* ---- welcome modal ---- */
+.modal-overlay{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.66);backdrop-filter:blur(3px);padding:20px;overflow-y:auto}
+.modal-overlay.show{display:flex}
+.modal{background:var(--panel);border:1px solid var(--line2);border-radius:16px;max-width:540px;width:100%;
+  padding:26px 26px 22px;box-shadow:0 24px 70px rgba(0,0,0,.6);max-height:calc(100vh - 40px);overflow-y:auto;margin:auto}
+.modal h2{margin:0 0 2px;font-size:22px;letter-spacing:-.02em}
+.modal h2 .tick{color:var(--green);font-family:var(--mono);font-size:12px;border:1px solid var(--green-dim);border-radius:4px;padding:1px 6px;margin-left:8px;vertical-align:middle}
+.modal .lead{color:var(--muted);font-size:14px;margin:0 0 16px}
+.modal ul.feat{list-style:none;margin:0 0 18px;padding:0;display:flex;flex-direction:column;gap:11px}
+.modal ul.feat li{display:flex;gap:11px;align-items:flex-start;font-size:14px;line-height:1.45}
+.modal ul.feat .ic{flex:0 0 auto;width:26px;height:26px;border-radius:7px;display:grid;place-items:center;
+  background:var(--panel2);border:1px solid var(--line);font-size:15px}
+.modal ul.feat b{color:var(--txt)}
+.modal .priv{font-size:12.5px;color:var(--faint);border-top:1px solid var(--line);padding-top:12px;margin:0 0 16px}
+.modal .modal-btns{display:flex;gap:10px;flex-wrap:wrap}
+.modal .modal-btns .btn{flex:1 1 auto}
+.btn.primary{background:var(--green);color:var(--bg);border:1px solid var(--green);font-weight:700}
 hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .legend{display:flex;gap:16px;font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px}
 .legend span{display:flex;align-items:center;gap:6px}
@@ -519,6 +537,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <h3>Demo data</h3>
       <p class="note">Curious what the app looks like full of trades? Flip this on to load a sample portfolio that populates every tab and chart. <b>Your own data is kept safe</b> and returns the moment you switch it off — nothing is saved to this browser or synced to Drive while demo data is showing.</p>
       <label class="demoswitch"><input type="checkbox" id="demoToggle"><span>Show demo data</span></label>
+      <button class="iconbtn" id="showWelcome" style="margin-left:14px">Show the intro again</button>
     </div>
     <div class="panel">
       <h3>Import CSV</h3>
@@ -575,6 +594,24 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 </main>
 
 <div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="welcomeModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle">
+    <h2 id="welcomeTitle">Welcome to Trading Ledger<span class="tick">P/L</span></h2>
+    <p class="lead">A fast, private journal for stocks, options, futures and sell-side spreads — with a live P&amp;L dashboard.</p>
+    <ul class="feat">
+      <li><span class="ic">📈</span><span><b>Log every trade</b> across the Trades, Positions, Sell-Side and Prop Firm tabs, and watch your realized &amp; unrealized P/L update instantly.</span></li>
+      <li><span class="ic">📊</span><span><b>Dashboard charts</b> — equity curve &amp; drawdown, win rate, P/L by ticker, monthly bars, a daily calendar and more.</span></li>
+      <li><span class="ic">🤖</span><span><b>AI Trade Coach</b> — chat about your performance using your own free Gemini key (or OpenAI, Claude, OpenRouter).</span></li>
+      <li><span class="ic">🎨</span><span><b>Themes &amp; sync</b> — pick a look up top, and optionally back up to <b>your own</b> Google Drive.</span></li>
+    </ul>
+    <p class="priv">🔒 Local-first: your data lives in this browser (and only your Drive if you connect it). There's no server — nobody else can see your trades.</p>
+    <div class="modal-btns">
+      <button class="btn primary" id="welcomeStart">Get started</button>
+      <button class="btn ghost" id="welcomeDemo">Show me with demo data</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ============================ ENGINE (tested) ============================ */
@@ -2262,6 +2299,11 @@ function loadPfEdit(id){const e=state.propfirm.find(x=>x.id===id);if(!e)return;e
   $("#pf-date").value=e.date;$("#pf-amt").value=e.amount;$("#pf-type").value=e.type||"";
   $("#savePf").textContent="Save Changes";$("#cancelPf").style.display="";switchView("prop");window.scrollTo({top:0,behavior:"smooth"});}
 
+/* ---- first-visit welcome ---- */
+const WELCOME_LS="tape_welcomed";
+function welcomeSeen(){try{return localStorage.getItem(WELCOME_LS)==="1";}catch(e){return false;}}
+function openWelcome(){const o=$("#welcomeModal");if(o)o.classList.add("show");}
+function closeWelcome(){const o=$("#welcomeModal");if(o)o.classList.remove("show");try{localStorage.setItem(WELCOME_LS,"1");}catch(e){}}
 function switchView(v){
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
   document.querySelectorAll(".view").forEach(s=>s.classList.toggle("on",s.id==="view-"+v));
@@ -2320,6 +2362,13 @@ function init(){
     rd.onload=()=>importCSV(rd.result);rd.readAsText(f);e.target.value="";};
   $("#csvTemplate").onclick=csvTemplate;
   $("#demoToggle").onchange=e=>setDemo(e.target.checked);
+  // welcome modal
+  $("#welcomeStart").onclick=closeWelcome;
+  $("#welcomeDemo").onclick=()=>{closeWelcome();$("#demoToggle").checked=true;setDemo(true);switchView("dash");};
+  $("#showWelcome").onclick=openWelcome;
+  $("#welcomeModal").addEventListener("click",e=>{if(e.target===$("#welcomeModal"))closeWelcome();});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#welcomeModal").classList.contains("show"))closeWelcome();});
+  if(!welcomeSeen())openWelcome();
   $("#expJson").onclick=exportJSON;$("#expCsv").onclick=exportCSV;
   $("#impJson").onclick=()=>$("#jsonFile").click();
   $("#jsonFile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
