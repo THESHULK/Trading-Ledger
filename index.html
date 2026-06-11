@@ -301,6 +301,21 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 
     <div class="cards" id="cards"></div>
 
+    <div class="panel">
+      <h3>AI Trade Analysis <span class="hint">Google Gemini · free</span></h3>
+      <div id="aiKeyRow" class="ai-keyrow">
+        <input type="password" id="aiKey" placeholder="Paste your Google AI Studio API key" autocomplete="off">
+        <button class="iconbtn" id="aiSaveKey">Save key</button>
+        <span class="note">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Stored only in this browser — never uploaded. Your trade data is sent to Google to generate the analysis.</span>
+      </div>
+      <div class="ai-controls">
+        <button class="iconbtn" id="aiAnalyze">✦ Analyze my trades</button>
+        <button class="iconbtn" id="aiChangeKey" style="display:none">change key</button>
+        <span class="mut" id="aiStatus"></span>
+      </div>
+      <div class="ai-out" id="aiOut"></div>
+    </div>
+
     <div class="grid2">
       <div class="panel">
         <h3>Cumulative Realized P&amp;L <span class="hint" id="cumHint"></span></h3>
@@ -366,21 +381,6 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
         <div class="chartwrap"><svg class="chart" id="dowChart" viewBox="0 0 360 260"></svg>
           <div class="tip" id="dowTip"></div></div>
       </div>
-    </div>
-
-    <div class="panel">
-      <h3>AI Trade Analysis <span class="hint">Google Gemini · free</span></h3>
-      <div id="aiKeyRow" class="ai-keyrow">
-        <input type="password" id="aiKey" placeholder="Paste your Google AI Studio API key" autocomplete="off">
-        <button class="iconbtn" id="aiSaveKey">Save key</button>
-        <span class="note">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Stored only in this browser — never uploaded. Your trade data is sent to Google to generate the analysis.</span>
-      </div>
-      <div class="ai-controls">
-        <button class="iconbtn" id="aiAnalyze">✦ Analyze my trades</button>
-        <button class="iconbtn" id="aiChangeKey" style="display:none">change key</button>
-        <span class="mut" id="aiStatus"></span>
-      </div>
-      <div class="ai-out" id="aiOut"></div>
     </div>
   </section>
 
