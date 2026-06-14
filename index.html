@@ -1202,7 +1202,7 @@ function shortMoney(v){const a=Math.abs(v);const s=v<0?"-":"";
 
 /* ---- by instrument ---- */
 function drawInstrument(realized,pos){
-  const svg=$("#instChart");const W=360,H=260,pad={l:14,r:14,t:18,b:30};
+  const svg=$("#instChart");const W=360,H=260,pad={l:14,r:14,t:18,b:46};
   const types=["stock","option","future","spread","propfirm"];const labels={stock:"Stocks",option:"Options",future:"Futures",spread:"Sell-Side",propfirm:"Prop Firm"};
   const colors={stock:"var(--blue)",option:"var(--amber)",future:"#d59bff",spread:"#ff9bd0",propfirm:"#6fe0c2"};
   const data=types.map(ty=>{
