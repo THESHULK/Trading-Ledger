@@ -904,7 +904,18 @@ async function driveConnect(){
   if(!gisReady()){toast("Google sign-in still loading — try again",true);return;}
   try{await ensureToken(true);driveConnected=true;try{localStorage.setItem("gdrive_on","1");}catch(e){}
     updateDriveUI();flashSaved();await driveSync();startDriveAuto();toast("Connected to Google Drive");}
-  catch(e){toast("Google sign-in canceled",true);}
+  catch(e){console.warn("Google Drive connect failed:",e);toast(driveErrMsg(e),true);}
+}
+// Turn a GIS auth failure into something the user can act on, instead of always
+// blaming a "cancel". A blank popup that never finishes is usually an origin or
+// third-party-cookie problem, not a real cancel.
+function driveErrMsg(e){
+  const t=e&&(e.type||e.error||"");
+  if(t==="popup_closed"||t==="popup_closed_by_user")return "Sign-in window closed before finishing — if it was blank, see the note below";
+  if(t==="popup_failed_to_open")return "Couldn't open the Google popup — allow pop-ups for this site and retry";
+  if(t==="access_denied")return "Access wasn't granted — approve the Drive permission to sync";
+  const m=t||(e&&e.message)||"unknown error";
+  return "Google sign-in failed ("+m+") — check this site's authorized origin & third-party cookies";
 }
 function driveDisconnect(){
   if(gToken&&gisReady()&&google.accounts.oauth2.revoke)try{google.accounts.oauth2.revoke(gToken);}catch(e){}
