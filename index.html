@@ -1107,7 +1107,7 @@ function renderDash(){
   const spc=computeSpreads(spreadsActive);
   const spRealized=spc.realized.filter(e=>(!fromD||e.date>=fromD)&&(!toD||e.date<=toD));
   // open spreads: unrealized = net credit/debit collected (− open fees)
-  const spreadPos=spc.open.map(sp=>({instrument:"spread",symbol:(sp.symbol||"").toUpperCase(),unrealized:spreadNetOpen(sp)*num(sp.quantity)*100-num(sp.fees)}));
+  const spreadPos=spc.open.map(sp=>({instrument:"spread",symbol:(sp.symbol||"").toUpperCase(),qty:num(sp.quantity),type:sp.type,expiry:sp.expiry||null,fees:num(sp.fees),legs:sp.legs,unrealized:spreadNetOpen(sp)*num(sp.quantity)*100-num(sp.fees)}));
   const allRealized=realized.concat(spRealized);
   const allPos=pos.concat(spreadPos);
   // prop firm cashflows
@@ -1616,6 +1616,7 @@ function aiMarkdown(md){
 }
 function aiBuildPayload(d){
   const m2=v=>Math.round(v*100)/100;
+  const spreadName=c=>(SPREAD_TYPES[c]&&SPREAD_TYPES[c].name)||c||null;
   const realized=d.allRealized;
   const ev=realized.concat(d.propEvents);
   const grossW=realized.filter(r=>r.pnl>0).reduce((s,r)=>s+r.pnl,0);
@@ -1642,11 +1643,26 @@ function aiBuildPayload(d){
     pnlByTicker:round(agg(realized,"symbol")),
     pnlByDayOfWeek:round(dow),
     pnlByMonth:round(monthly),
-    openPositions:d.allPos.map(p=>({symbol:p.symbol,instrument:p.instrument,qty:m2(p.qty||0),unrealized:p.unrealized==null?null:m2(p.unrealized)})),
-    closedTrades:realized.map(r=>({date:r.date,symbol:r.symbol,instrument:r.instrument,
-      qty:m2(r.qty||0),dir:r.dir===1?"long":r.dir===-1?"short":(r.type||null),
-      open:r.openPrice!=null?m2(r.openPrice):null,close:r.closePrice!=null?m2(r.closePrice):null,
-      pnl:m2(r.pnl)}))
+    openPositions:d.allPos.map(p=>{
+      const o={symbol:p.symbol,instrument:p.instrument,qty:m2(p.qty||0),unrealized:p.unrealized==null?null:m2(p.unrealized)};
+      if(p.avgPrice!=null)o.avgPrice=m2(p.avgPrice);            // your average entry cost per share/contract
+      if(p.costBasis!=null)o.costBasis=m2(p.costBasis);         // total cost of the position
+      if(p.mark!=null)o.currentPrice=m2(p.mark);                // latest mark used to compute unrealized
+      if(p.direction)o.direction=p.direction;
+      if(p.multiplier!=null&&p.multiplier!==1)o.multiplier=p.multiplier;
+      if(p.instrument==="option"&&p.key){const k=String(p.key).split(":");o.expiry=k[2]||null;o.strike=k[3]?num(k[3]):null;o.optionType=k[4]||null;}
+      if(p.instrument==="spread"){o.type=spreadName(p.type);o.expiry=p.expiry||null;
+        o.legs=(p.legs||[]).map(l=>({side:l.side,optionType:l.optionType,strike:l.strike==null?null:num(l.strike),premiumOpen:l.open==null?null:m2(num(l.open)),premiumClose:l.close==null?null:m2(num(l.close))}));}
+      return o;
+    }),
+    closedTrades:realized.map(r=>{
+      const t={date:r.date,symbol:r.symbol,instrument:r.instrument,
+        qty:m2(r.qty||0),dir:r.dir===1?"long":r.dir===-1?"short":(r.type?spreadName(r.type):null),
+        open:r.openPrice!=null?m2(r.openPrice):null,close:r.closePrice!=null?m2(r.closePrice):null,
+        pnl:m2(r.pnl)};
+      if(r.instrument==="option"&&r.key){const k=String(r.key).split(":");t.expiry=k[2]||null;t.strike=k[3]?num(k[3]):null;t.optionType=k[4]||null;}
+      return t;
+    })
   };
 }
 // persistent coach persona + the trader's current data, sent as system_instruction every turn
@@ -1667,7 +1683,8 @@ When the trader asks for a full analysis or review, cover: a **Verdict** (profit
 
 For follow-up questions, answer just that question using the data — don't repeat the whole analysis.
 
-All P&L is USD. dir is long/short; pnl is realized P/L per closed trade.
+All P&L is USD. dir is long/short; pnl is realized P/L per closed trade. Closed option trades include strike/expiry/optionType.
+openPositions include avgPrice (your average entry cost per share/contract), costBasis (total cost), currentPrice (the latest mark used to derive unrealized), direction and multiplier; options also carry strike/expiry/optionType. A spread position lists each leg with side (short = sold to open, so premiumOpen is credit you RECEIVED; long = bought to open, so premiumOpen is what you PAID), optionType, strike, premiumOpen and premiumClose (per-contract prices; multiply by 100 × qty for dollars). Use these fields for scenario questions — e.g. for a covered call exercised at its strike, the stock leg P/L is (strike − avgPrice) × qty × multiplier and you keep the short call's premium. You have cost basis and option premiums; don't claim they're missing.
 
 TRADER'S JOURNAL DATA (JSON):
 ${JSON.stringify(data)}`;
