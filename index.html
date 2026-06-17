@@ -630,7 +630,7 @@ function spreadNetClose(sp){return sp.legs.reduce((s,l)=>s+(l.side==="short"?num
 function spreadRealized(sp){let p=0;for(const l of sp.legs){p+=(l.side==="short"?(num(l.open)-num(l.close)):(num(l.close)-num(l.open)))*num(sp.quantity)*100;}return p-num(sp.fees);}
 function computeSpreads(spreads){const realized=[],open=[];
   for(const sp of spreads){
-    if(sp.status==="closed")realized.push({date:sp.dateClosed,symbol:(sp.symbol||"").toUpperCase(),instrument:"spread",pnl:spreadRealized(sp),qty:sp.quantity,type:sp.type});
+    if(sp.status==="closed")realized.push({date:sp.dateClosed,symbol:(sp.symbol||"").toUpperCase(),instrument:"spread",pnl:spreadRealized(sp),qty:sp.quantity,type:sp.type,expiry:sp.expiry||null,legs:sp.legs});
     else open.push(sp);}
   return {realized,open};}
 
@@ -1617,6 +1617,8 @@ function aiMarkdown(md){
 function aiBuildPayload(d){
   const m2=v=>Math.round(v*100)/100;
   const spreadName=c=>(SPREAD_TYPES[c]&&SPREAD_TYPES[c].name)||c||null;
+  // per-leg detail: side (short=sold to open), strike, and per-contract premium in/out
+  const legPayload=legs=>(legs||[]).map(l=>({side:l.side,optionType:l.optionType,strike:l.strike==null?null:num(l.strike),premiumOpen:l.open==null?null:m2(num(l.open)),premiumClose:l.close==null?null:m2(num(l.close))}));
   const realized=d.allRealized;
   const ev=realized.concat(d.propEvents);
   const grossW=realized.filter(r=>r.pnl>0).reduce((s,r)=>s+r.pnl,0);
@@ -1651,8 +1653,7 @@ function aiBuildPayload(d){
       if(p.direction)o.direction=p.direction;
       if(p.multiplier!=null&&p.multiplier!==1)o.multiplier=p.multiplier;
       if(p.instrument==="option"&&p.key){const k=String(p.key).split(":");o.expiry=k[2]||null;o.strike=k[3]?num(k[3]):null;o.optionType=k[4]||null;}
-      if(p.instrument==="spread"){o.type=spreadName(p.type);o.expiry=p.expiry||null;
-        o.legs=(p.legs||[]).map(l=>({side:l.side,optionType:l.optionType,strike:l.strike==null?null:num(l.strike),premiumOpen:l.open==null?null:m2(num(l.open)),premiumClose:l.close==null?null:m2(num(l.close))}));}
+      if(p.instrument==="spread"){o.type=spreadName(p.type);o.expiry=p.expiry||null;o.legs=legPayload(p.legs);}
       return o;
     }),
     closedTrades:realized.map(r=>{
@@ -1661,6 +1662,7 @@ function aiBuildPayload(d){
         open:r.openPrice!=null?m2(r.openPrice):null,close:r.closePrice!=null?m2(r.closePrice):null,
         pnl:m2(r.pnl)};
       if(r.instrument==="option"&&r.key){const k=String(r.key).split(":");t.expiry=k[2]||null;t.strike=k[3]?num(k[3]):null;t.optionType=k[4]||null;}
+      if(r.instrument==="spread"){t.expiry=r.expiry||null;if(r.legs)t.legs=legPayload(r.legs);}
       return t;
     })
   };
