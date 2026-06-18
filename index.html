@@ -484,7 +484,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
         <div class="field fut-only"><label>Direction</label><select id="f-fdir"><option value="long">Long</option><option value="short">Short</option></select></div>
         <div class="field fut-only"><label>Entry Price</label><input type="number" id="f-entry" step="any" placeholder="0.00"></div>
         <div class="field fut-only"><label>Exit Price <span class="mut">(optional)</span></label><input type="number" id="f-exit" step="any" placeholder="open — leave blank"></div>
-        <div class="field"><label id="multLbl">Multiplier</label><input type="number" id="f-mult" step="any" placeholder="1"></div>
+        <div class="field fut-only"><label id="multLbl">Multiplier <span class="mut">(point value)</span></label><input type="number" id="f-mult" step="any" placeholder="auto from symbol"></div>
         <div class="field"><label>Fees</label><input type="number" id="f-fees" step="any" placeholder="0"></div>
       </div>
       <div class="row">
@@ -1932,7 +1932,6 @@ function tradeRowHtml(t,pl){
     <td class="l"><span class="badge ${t.direction==="short"?"sell":"buy"}">${(t.direction||"long").toUpperCase()}</span></td>
     <td>${fmtNum(t.quantity)}</td>
     <td>${fmtNum(t.entry)} <span class="mut">→</span> ${open?'<span class="mut">open</span>':fmtNum(t.exit)}</td>
-    <td class="mut">${fmtNum(t.multiplier??defaultMultiplier("future",t.symbol))}</td>
     <td class="mut">${t.fees?fmtMoney(t.fees):"—"}</td>
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="open futures position — P/L is realized when you set an exit price">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-edit="${t.id}">edit</button>
@@ -1948,7 +1947,6 @@ function tradeRowHtml(t,pl){
     <td class="l"><span class="badge ${t.action}">${t.action.toUpperCase()}</span></td>
     <td>${fmtNum(t.quantity)}</td>
     <td>${fmtNum(t.price)}</td>
-    <td class="mut">${fmtNum(t.multiplier??defaultMultiplier(t.instrument,t.symbol))}</td>
     <td class="mut">${t.fees?fmtMoney(t.fees):"—"}</td>
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="opening trade — P/L is realized when it is closed">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-edit="${t.id}">edit</button>
@@ -1967,7 +1965,6 @@ function spreadRowHtml(s){
     <td class="l"><span class="badge spread">${s.type||"—"}</span></td>
     <td>${fmtNum(s.quantity)}</td>
     <td class="${netO>=0?'pos':'neg'}">${netO>=0?"cr ":"db "}${fmtMoney(Math.abs(netO))}</td>
-    <td class="mut">100</td>
     <td class="mut">${s.fees?fmtMoney(s.fees):"—"}</td>
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="open spread — P/L is realized when it is closed">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-sedit="${s.id}">edit ↗</button>
@@ -2001,9 +1998,9 @@ function renderTrades(){
     .sort((a,b)=>cmpVals(gv(a,tradeSort.col),gv(b,tradeSort.col),tradeSort.dir)||((b.o._seq||0)-(a.o._seq||0)));
   renderTradeSummary(rows,plByTrade);
   const t=$("#tradeTable");
-  const cols=[["date","Date","l"],["instrument","Instrument","l"],["symbol","Symbol","l"],["account","Account","l"],["dte","DTE",""],["strike","Strike",""],["action","Side","l"],["quantity","Qty",""],["price","Price",""],["mult","Mult",""],["fees","Fees",""],["pl","Realized P/L",""]];
+  const cols=[["date","Date","l"],["instrument","Instrument","l"],["symbol","Symbol","l"],["account","Account","l"],["dte","DTE",""],["strike","Strike",""],["action","Side","l"],["quantity","Qty",""],["price","Price",""],["fees","Fees",""],["pl","Realized P/L",""]];
   const head=headFilter(cols,tradeSort,kinds,tradeFilters,distinct,true);
-  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="13"><div class="empty">no trades match — adjust filters, add one above, or import a CSV</div></td></tr></tbody>`;wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);fitWideTable("#tradeTable");return;}
+  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="12"><div class="empty">no trades match — adjust filters, add one above, or import a CSV</div></td></tr></tbody>`;wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);fitWideTable("#tradeTable");return;}
   t.innerHTML=head+`<tbody>`+rows.map(it=>it.k==="trade"?tradeRowHtml(it.o,plByTrade[it.o.id]):spreadRowHtml(it.o)).join("")+`</tbody>`;
   wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);
   fitWideTable("#tradeTable");
@@ -2026,16 +2023,15 @@ function renderPositions(){
   pos=pos.filter(p=>rowPasses(c=>pgv(p,c),kinds,posFilters));
   pos.sort((a,b)=>cmpVals(pgv(a,posSort.col),pgv(b,posSort.col),posSort.dir));
   const t=$("#posTable");
-  const cols=[["symbol","Symbol","l"],["instrument","Type","l"],["direction","Dir","l"],["qty","Qty",""],["avgPrice","Avg Price",""],["multiplier","Mult",""],["mark","Mark",""],["unrealized","Unrealized",""]];
+  const cols=[["symbol","Symbol","l"],["instrument","Type","l"],["direction","Dir","l"],["qty","Qty",""],["avgPrice","Avg Price",""],["mark","Mark",""],["unrealized","Unrealized",""]];
   const head=headFilter(cols,posSort,kinds,posFilters,distinct,false);
-  if(pos.length===0){t.innerHTML=head+`<tbody><tr><td colspan="8"><div class="empty">no open positions match these filters</div></td></tr></tbody>`;wireTable("#posTable",posSort,posFilters,renderPositions,["symbol","instrument","direction"]);return;}
+  if(pos.length===0){t.innerHTML=head+`<tbody><tr><td colspan="7"><div class="empty">no open positions match these filters</div></td></tr></tbody>`;wireTable("#posTable",posSort,posFilters,renderPositions,["symbol","instrument","direction"]);return;}
   t.innerHTML=head+`<tbody>`+pos.map(p=>`<tr>
     <td class="l">${p.symbol}${p.key.startsWith("OPT")?`<span class="mut" style="font-size:10px"> ${p.key.split(":").slice(2).join(" ")}</span>`:""}</td>
     <td class="l"><span class="badge ${p.instrument}">${p.instrument}</span></td>
     <td class="l ${p.direction==="Long"?"pos":"neg"}">${p.direction}</td>
     <td>${fmtNum(p.qty)}</td>
     <td>${fmtNum(p.avgPrice)}</td>
-    <td class="mut">${fmtNum(p.multiplier)}</td>
     <td><input class="markin mono" type="number" step="any" value="${p.mark??""}" placeholder="—" data-key="${p.key}"></td>
     <td class="${p.unrealized==null?'mut':cls(p.unrealized)}">${p.unrealized==null?"—":fmtSignedColored(p.unrealized).replace("−","-")}</td>
   </tr>`).join("")+`</tbody>`;
