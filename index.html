@@ -1839,8 +1839,13 @@ function headFilter(cols,sort,kinds,filters,distinct,hasActions){
 }
 function rowPasses(getVal,kinds,filters){
   for(const c in filters){const fv=filters[c];if(fv==null||fv==="")continue;
-    const sv=String(getVal(c)==null?"":getVal(c));
-    if(kinds[c]==="select"){if(sv!==fv)return false;}
+    const raw=getVal(c),sv=String(raw==null?"":raw);
+    if(kinds[c]==="select"){if(sv!==fv)return false;continue;}
+    // text filters accept a numeric comparison (e.g. <7, >=30, =105); otherwise substring match
+    const op=String(fv).trim().match(/^(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)$/);
+    if(op){const n=typeof raw==="number"?raw:parseFloat(raw);if(!isFinite(n))return false;
+      const x=parseFloat(op[2]),k=op[1];
+      if(!(k==="<"?n<x:k===">"?n>x:k==="<="?n<=x:k===">="?n>=x:n===x))return false;}
     else if(!sv.toLowerCase().includes(String(fv).toLowerCase()))return false;}
   return true;
 }
@@ -1909,7 +1914,7 @@ function tradeRowHtml(t,pl){
     <td class="l">${symLabel(t)}</td>
     <td class="l">${t.account?t.account:'<span class="mut">—</span>'}</td>
     <td>${t.instrument==="option"?fmtDte(daysToExp(t.expiry)):'<span class="mut">—</span>'}</td>
-    <td>${t.instrument==="option"&&t.strike!=null&&t.strike!==""?t.strike:'<span class="mut">—</span>'}</td>
+    <td class="l">${t.instrument==="option"&&t.strike!=null&&t.strike!==""?t.strike:'<span class="mut">—</span>'}</td>
     <td class="l"><span class="badge ${t.action}">${t.action.toUpperCase()}</span></td>
     <td>${fmtNum(t.quantity)}</td>
     <td>${fmtNum(t.price)}</td>
@@ -1960,13 +1965,13 @@ function renderTrades(){
   };
   const items=state.trades.map(o=>({k:"trade",o}));
   if(!hideSellSide)items.push(...state.spreads.map(o=>({k:"spread",o})));
-  const kinds={instrument:"select",account:"select",symbol:"text",action:"select",strike:"text"};
+  const kinds={instrument:"select",account:"select",symbol:"text",action:"select",strike:"text",dte:"text"};
   const distinct={instrument:distinctVals(items,it=>gv(it,"instrument")),account:distinctVals(items,it=>gv(it,"account")),action:distinctVals(items,it=>gv(it,"action"))};
   const rows=items.filter(it=>rowPasses(c=>gv(it,c),kinds,tradeFilters))
     .sort((a,b)=>cmpVals(gv(a,tradeSort.col),gv(b,tradeSort.col),tradeSort.dir)||((b.o._seq||0)-(a.o._seq||0)));
   renderTradeSummary(rows,plByTrade);
   const t=$("#tradeTable");
-  const cols=[["date","Date","l"],["instrument","Instrument","l"],["symbol","Symbol","l"],["account","Account","l"],["dte","DTE",""],["strike","Strike",""],["action","Side","l"],["quantity","Qty",""],["price","Price",""],["mult","Mult",""],["fees","Fees",""],["pl","Realized P/L",""]];
+  const cols=[["date","Date","l"],["instrument","Instrument","l"],["symbol","Symbol","l"],["account","Account","l"],["dte","DTE",""],["strike","Strike","l"],["action","Side","l"],["quantity","Qty",""],["price","Price",""],["mult","Mult",""],["fees","Fees",""],["pl","Realized P/L",""]];
   const head=headFilter(cols,tradeSort,kinds,tradeFilters,distinct,true);
   if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="13"><div class="empty">no trades match — adjust filters, add one above, or import a CSV</div></td></tr></tbody>`;wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);return;}
   t.innerHTML=head+`<tbody>`+rows.map(it=>it.k==="trade"?tradeRowHtml(it.o,plByTrade[it.o.id]):spreadRowHtml(it.o)).join("")+`</tbody>`;
@@ -2242,9 +2247,10 @@ function loadSpreadEdit(id){
 }
 function renderSpreads(){
   const sval=(s,c)=>c==="date"?(s.dateOpened||s.dateClosed||""):c==="type"?s.type:c==="symbol"?s.symbol:c==="account"?(s.account||""):c==="exp"?(s.expiry||""):
+    c==="strike"?(s.legs||[]).map(l=>l.strike).join(" / "):
     c==="qty"?s.quantity:c==="netOpen"?spreadNetOpen(s):c==="netClose"?spreadNetClose(s):
     c==="pnl"?(s.status==="closed"?spreadRealized(s):spreadNetOpen(s)*num(s.quantity)*100-num(s.fees)):"";
-  const kinds={date:"text",type:"select",symbol:"text",account:"select",exp:"text"};
+  const kinds={date:"text",type:"select",symbol:"text",account:"select",exp:"text",strike:"text"};
   const distinct={type:distinctVals(state.spreads,s=>s.type),account:distinctVals(state.spreads,s=>s.account)};
   const rows=state.spreads.slice().filter(s=>rowPasses(c=>sval(s,c),kinds,spreadFilters))
     .sort((a,b)=>cmpVals(sval(a,spreadSort.col),sval(b,spreadSort.col),spreadSort.dir));
@@ -2261,9 +2267,9 @@ function renderSpreads(){
     `<span class="sep">·</span>`+
     `<span class="stat"><b class="mut">${clS.length}</b> <span class="k">closed</span></span>`+
     `<span class="stat"><b class="mut">${opS.length}</b> <span class="k">open</span></span>`;
-  const cols=[["date","Opened","l"],["type","Type","l"],["symbol","Symbol","l"],["account","Account","l"],["exp","Exp","l"],["qty","Qty",""],["netOpen","Net Open",""],["netClose","Net Close",""],["pnl","P&L",""]];
+  const cols=[["date","Opened","l"],["type","Type","l"],["symbol","Symbol","l"],["account","Account","l"],["exp","Exp","l"],["strike","Strike","l"],["qty","Qty",""],["netOpen","Net Open",""],["netClose","Net Close",""],["pnl","P&L",""]];
   const head=headFilter(cols,spreadSort,kinds,spreadFilters,distinct,true);
-  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="10"><div class="empty">no sell-side trades match these filters</div></td></tr></tbody>`;wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp"]);return;}
+  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="11"><div class="empty">no sell-side trades match these filters</div></td></tr></tbody>`;wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp","strike"]);return;}
   t.innerHTML=head+`<tbody>`+rows.map(s=>{
     const netO=spreadNetOpen(s),netC=spreadNetClose(s),closed=s.status==="closed",pnl=closed?spreadRealized(s):null,un=netO*num(s.quantity)*100-num(s.fees);
     const legtxt=s.legs.map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0].toUpperCase()} ${fmtNum(l.strike)}`).join(" / ");
@@ -2273,6 +2279,7 @@ function renderSpreads(){
       <td class="l">${s.symbol}<div class="legsub">${legtxt}</div></td>
       <td class="l">${s.account?s.account:'<span class="mut">—</span>'}</td>
       <td class="l">${s.expiry||"—"}</td>
+      <td class="l">${(s.legs||[]).map(l=>l.strike).join(" / ")||'<span class="mut">—</span>'}</td>
       <td>${fmtNum(s.quantity)}</td>
       <td class="${netO>=0?'pos':'neg'}">${netO>=0?"cr ":"db "}${fmtMoney(Math.abs(netO))}</td>
       <td class="mut">${closed?((netC>=0?"cr ":"db ")+fmtMoney(Math.abs(netC))):"—"}</td>
@@ -2280,7 +2287,7 @@ function renderSpreads(){
       <td><button class="iconbtn" data-edit="${s.id}">edit</button>
           <button class="iconbtn del" data-del="${s.id}">del</button></td>
     </tr>`;}).join("")+`</tbody>`;
-  wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp"]);
+  wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp","strike"]);
   t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{state.spreads=state.spreads.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadSpreadEdit(b.dataset.edit));
 }
