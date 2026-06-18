@@ -224,11 +224,8 @@ svg.chart{width:100%;display:block;overflow:visible}
 .tablewrap::-webkit-scrollbar{height:10px}
 .tablewrap::-webkit-scrollbar-thumb{background:var(--line2);border-radius:6px;border:2px solid var(--panel)}
 .tablewrap::-webkit-scrollbar-track{background:transparent}
-/* on large screens let the (wide) trades table break out of the 1180px content column and use the window,
-   so all columns fit without scrolling; stays within 96vw so the page never scrolls horizontally */
-@media(min-width:1240px){
-  .tablewrap-wide{width:min(96vw,1680px);margin-left:calc(50% - min(96vw,1680px)/2);margin-right:calc(50% - min(96vw,1680px)/2)}
-}
+/* .tablewrap-wide breakout (width + centering margins) is sized exactly to the content by
+   fitWideTable() in JS, so the table only ever grows as wide as its columns actually need */
 table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px;white-space:nowrap}
 th{background:var(--bg2);color:var(--faint);text-align:center;font-weight:600;
   padding:10px 10px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
@@ -1884,8 +1881,18 @@ function wireTable(sel,sort,filters,reRender,ascCols){
 // itself is still gated to wide screens, so narrow screens just scroll as before.
 function fitWideTable(sel){
   const tbl=$(sel);if(!tbl)return;const wrap=tbl.closest(".tablewrap");if(!wrap)return;
+  // reset so we measure against the normal content column
+  wrap.style.width=wrap.style.marginLeft=wrap.style.marginRight="";
   wrap.classList.remove("tablewrap-wide");
-  if(wrap.clientWidth>0&&tbl.scrollWidth>wrap.clientWidth+1)wrap.classList.add("tablewrap-wide");
+  if(window.innerWidth<1240||wrap.clientWidth<=0)return;   // narrow screens just scroll, never break out
+  const avail=wrap.clientWidth,need=tbl.scrollWidth;
+  if(need<=avail+1)return;                                  // already fits — leave it in the column
+  // expand only as much as the content needs, capped to the viewport so the page never scrolls
+  const target=Math.min(need+2,window.innerWidth*0.96,1680);
+  if(target<=avail+1)return;
+  const off=Math.round((target-avail)/2);
+  wrap.classList.add("tablewrap-wide");
+  wrap.style.width=target+"px";wrap.style.marginLeft=wrap.style.marginRight="-"+off+"px";
 }
 
 function renderTradeSummary(rows,plByTrade){
