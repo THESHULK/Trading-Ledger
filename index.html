@@ -496,7 +496,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 
     <p class="note">Single-leg stock/option/future executions plus your sell-side spreads (one summary row each). Spread rows are read-only here — use <b>edit ↗</b> to manage them on the Sell-Side tab. <label style="margin-left:6px;cursor:pointer;user-select:none"><input type="checkbox" id="hideSellSide" style="vertical-align:middle"> hide sell-side</label></p>
     <div class="tradesummary" id="tradeSummary"></div>
-    <div class="tablewrap tablewrap-wide"><table id="tradeTable"></table></div>
+    <div class="tablewrap"><table id="tradeTable"></table></div>
   </section>
 
   <!-- POSITIONS -->
@@ -531,7 +531,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       </div>
     </div>
     <div class="tradesummary" id="spreadSummary"></div>
-    <div class="tablewrap tablewrap-wide"><table id="spreadTable"></table></div>
+    <div class="tablewrap"><table id="spreadTable"></table></div>
   </section>
 
   <!-- PROP FIRM -->
@@ -1879,6 +1879,14 @@ function wireTable(sel,sort,filters,reRender,ascCols){
     if(el.tagName==="SELECT")el.onchange=h;else el.oninput=h;});
   if(_ff&&_ff.sel===sel){const t=tbl.querySelector(`[data-fcol="${_ff.col}"]`);if(t){t.focus();try{t.setSelectionRange(_ff.pos,_ff.pos);}catch(e){}}_ff=null;}
 }
+// Let a table break out of the 1180px content column only when its columns don't fit there.
+// Measure at the normal width (class removed) — if it overflows, add the class; the CSS breakout
+// itself is still gated to wide screens, so narrow screens just scroll as before.
+function fitWideTable(sel){
+  const tbl=$(sel);if(!tbl)return;const wrap=tbl.closest(".tablewrap");if(!wrap)return;
+  wrap.classList.remove("tablewrap-wide");
+  if(wrap.clientWidth>0&&tbl.scrollWidth>wrap.clientWidth+1)wrap.classList.add("tablewrap-wide");
+}
 
 function renderTradeSummary(rows,plByTrade){
   const el=$("#tradeSummary");if(!el)return;
@@ -1995,9 +2003,10 @@ function renderTrades(){
   const t=$("#tradeTable");
   const cols=[["date","Date","l"],["instrument","Instrument","l"],["symbol","Symbol","l"],["account","Account","l"],["dte","DTE",""],["strike","Strike",""],["action","Side","l"],["quantity","Qty",""],["price","Price",""],["mult","Mult",""],["fees","Fees",""],["pl","Realized P/L",""]];
   const head=headFilter(cols,tradeSort,kinds,tradeFilters,distinct,true);
-  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="13"><div class="empty">no trades match — adjust filters, add one above, or import a CSV</div></td></tr></tbody>`;wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);return;}
+  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="13"><div class="empty">no trades match — adjust filters, add one above, or import a CSV</div></td></tr></tbody>`;wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);fitWideTable("#tradeTable");return;}
   t.innerHTML=head+`<tbody>`+rows.map(it=>it.k==="trade"?tradeRowHtml(it.o,plByTrade[it.o.id]):spreadRowHtml(it.o)).join("")+`</tbody>`;
   wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);
+  fitWideTable("#tradeTable");
   t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
     state.trades=state.trades.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadEdit(b.dataset.edit));
@@ -2455,7 +2464,7 @@ function init(){
   loadToken();updateDriveUI();driveAutoResume();
   $("#clearAll").onclick=()=>{if(confirm("Delete ALL trades and marks? This cannot be undone."))
     {state={trades:[],marks:{},spreads:[],propfirm:[],seq:0};save();refreshAll();toast("All data deleted");}};
-  window.addEventListener("resize",()=>{if($("#view-dash").classList.contains("on"))renderDash();});
+  window.addEventListener("resize",()=>{if($("#view-dash").classList.contains("on"))renderDash();fitWideTable("#tradeTable");});
   switchView("dash");
   fetchStockPrices(false);
 }
