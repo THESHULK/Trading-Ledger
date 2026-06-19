@@ -1281,8 +1281,9 @@ function drawByTicker(realized,pos){
   const bh=Math.min(28,(H-pad.t-pad.b)/rows.length-6);
   const step=(H-pad.t-pad.b)/rows.length;
   let g=`<line x1="${zero}" y1="${pad.t}" x2="${zero}" y2="${H-pad.b}" stroke="var(--line2)"/>`;
+  const lblW=60; // reserve space at each end so the value label never bleeds past the chart edge
   rows.forEach((r,i)=>{const y=pad.t+i*step+(step-bh)/2;
-    const len=(Math.abs(r.v)/maxA)*(innerW/2);
+    const len=(Math.abs(r.v)/maxA)*Math.max(10,innerW/2-lblW);
     const x=r.v>=0?zero:zero-len;
     g+=`<rect x="${x}" y="${y}" width="${len}" height="${bh}" rx="4" fill="${r.v>=0?'var(--green)':'var(--red)'}" opacity=".9" class="bbar" data-s="${r.s}" data-v="${r.v}"/>`;
     g+=`<text class="axislbl" x="${pad.l-8}" y="${y+bh/2+3}" text-anchor="end" style="fill:var(--txt);font-size:11px">${r.s}</text>`;
