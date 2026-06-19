@@ -230,8 +230,8 @@ table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5
 th{background:var(--bg2);color:var(--faint);text-align:center;font-weight:600;
   padding:10px 10px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
   position:sticky;top:0;border-bottom:1px solid var(--line)}
-th:first-child,td:first-child{text-align:left}
-th.l,td.l{text-align:left}
+th:first-child,td:first-child{text-align:center}
+th.l,td.l{text-align:center}
 td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:center}
 tbody tr:hover{background:var(--panel2)}
 tbody tr:last-child td{border-bottom:0}
@@ -1936,6 +1936,7 @@ function tradeRowHtml(t,pl){
     <td class="l">${t.account?t.account:'<span class="mut">—</span>'}</td>
     <td><span class="mut">—</span></td>
     <td><span class="mut">—</span></td>
+    <td><span class="mut">—</span></td>
     <td class="l"><span class="badge ${t.direction==="short"?"sell":"buy"}">${(t.direction||"long").toUpperCase()}</span></td>
     <td>${fmtNum(t.quantity)}</td>
     <td>${fmtNum(t.entry)} <span class="mut">→</span> ${open?'<span class="mut">open</span>':fmtNum(t.exit)}</td>
@@ -1950,6 +1951,7 @@ function tradeRowHtml(t,pl){
     <td class="l">${symLabel(t)}</td>
     <td class="l">${t.account?t.account:'<span class="mut">—</span>'}</td>
     <td>${t.instrument==="option"?fmtDte(daysToExp(t.expiry)):'<span class="mut">—</span>'}</td>
+    <td>${t.instrument==="option"&&t.expiry?t.expiry:'<span class="mut">—</span>'}</td>
     <td>${t.instrument==="option"&&t.strike!=null&&t.strike!==""?t.strike:'<span class="mut">—</span>'}</td>
     <td class="l"><span class="badge ${t.action}">${t.action.toUpperCase()}</span></td>
     <td>${fmtNum(t.quantity)}</td>
@@ -1968,6 +1970,7 @@ function spreadRowHtml(s){
     <td class="l">${s.symbol||""}<div class="legsub">${legtxt}</div></td>
     <td class="l">${s.account?s.account:'<span class="mut">—</span>'}</td>
     <td>${fmtDte(daysToExp(s.expiry))}</td>
+    <td>${s.expiry||'<span class="mut">—</span>'}</td>
     <td>${(s.legs||[]).map(l=>l.strike).join(" / ")||'<span class="mut">—</span>'}</td>
     <td class="l"><span class="badge spread">${s.type||"—"}</span></td>
     <td>${fmtNum(s.quantity)}</td>
@@ -1983,31 +1986,33 @@ function renderTrades(){
   // unified accessor over a tagged item {k:'trade'|'spread', o:obj}
   const gv=(it,c)=>{const o=it.o;
     if(it.k==="trade"&&isFutureRT(o))return c==="date"?o.date:c==="instrument"?"future":c==="symbol"?o.symbol:c==="account"?(o.account||""):c==="action"?(o.direction||""):
-      c==="dte"?null:c==="strike"?"":c==="quantity"?o.quantity:c==="price"?num(o.entry):c==="mult"?(o.multiplier??defaultMultiplier("future",o.symbol)):c==="fees"?(o.fees||0):
+      c==="dte"?null:c==="expiry"?"":c==="strike"?"":c==="quantity"?o.quantity:c==="price"?num(o.entry):c==="mult"?(o.multiplier??defaultMultiplier("future",o.symbol)):c==="fees"?(o.fees||0):
       c==="pl"?(plByTrade[o.id]??null):"";
     if(it.k==="trade")return c==="date"?o.date:c==="instrument"?o.instrument:c==="symbol"?o.symbol:c==="account"?(o.account||""):c==="action"?o.action:
       c==="dte"?(o.instrument==="option"?(daysToExp(o.expiry)??null):null):
+      c==="expiry"?(o.instrument==="option"?(o.expiry||""):""):
       c==="strike"?(o.instrument==="option"?(o.strike??""):""):
       c==="quantity"?o.quantity:c==="price"?o.price:c==="mult"?(o.multiplier??defaultMultiplier(o.instrument,o.symbol)):c==="fees"?(o.fees||0):
       c==="pl"?(plByTrade[o.id]??null):"";
     const closed=o.status==="closed";
     return c==="date"?(o.dateOpened||o.dateClosed||""):c==="instrument"?"spread":c==="symbol"?(o.symbol||""):c==="account"?(o.account||""):c==="action"?(o.type||""):
       c==="dte"?(daysToExp(o.expiry)??null):
+      c==="expiry"?(o.expiry||""):
       c==="strike"?(o.legs||[]).map(l=>l.strike).join(" / "):
       c==="quantity"?o.quantity:c==="price"?spreadNetOpen(o):c==="mult"?100:c==="fees"?(o.fees||0):
       c==="pl"?(closed?spreadRealized(o):null):"";
   };
   const items=state.trades.map(o=>({k:"trade",o}));
   if(!hideSellSide)items.push(...state.spreads.map(o=>({k:"spread",o})));
-  const kinds={instrument:"select",account:"select",symbol:"text",action:"select",strike:"text",dte:"text"};
+  const kinds={instrument:"select",account:"select",symbol:"text",action:"select",strike:"text",dte:"text",expiry:"text"};
   const distinct={instrument:distinctVals(items,it=>gv(it,"instrument")),account:distinctVals(items,it=>gv(it,"account")),action:distinctVals(items,it=>gv(it,"action"))};
   const rows=items.filter(it=>rowPasses(c=>gv(it,c),kinds,tradeFilters))
     .sort((a,b)=>cmpVals(gv(a,tradeSort.col),gv(b,tradeSort.col),tradeSort.dir)||((b.o._seq||0)-(a.o._seq||0)));
   renderTradeSummary(rows,plByTrade);
   const t=$("#tradeTable");
-  const cols=[["date","Date","l"],["instrument","Instrument","l"],["symbol","Symbol","l"],["account","Account","l"],["dte","DTE",""],["strike","Strike",""],["action","Side","l"],["quantity","Qty",""],["price","Price",""],["fees","Fees",""],["pl","Realized P/L",""]];
+  const cols=[["date","Date","l"],["instrument","Instrument","l"],["symbol","Symbol","l"],["account","Account","l"],["dte","DTE",""],["expiry","Expiry",""],["strike","Strike",""],["action","Side","l"],["quantity","Qty",""],["price","Price",""],["fees","Fees",""],["pl","Realized P/L",""]];
   const head=headFilter(cols,tradeSort,kinds,tradeFilters,distinct,true);
-  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="12"><div class="empty">no trades match — adjust filters, add one above, or import a CSV</div></td></tr></tbody>`;wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);fitWideTable("#tradeTable");return;}
+  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="13"><div class="empty">no trades match — adjust filters, add one above, or import a CSV</div></td></tr></tbody>`;wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);fitWideTable("#tradeTable");return;}
   t.innerHTML=head+`<tbody>`+rows.map(it=>it.k==="trade"?tradeRowHtml(it.o,plByTrade[it.o.id]):spreadRowHtml(it.o)).join("")+`</tbody>`;
   wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);
   fitWideTable("#tradeTable");
