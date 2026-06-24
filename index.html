@@ -235,6 +235,12 @@ th.l,td.l{text-align:center}
 td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:center}
 tbody tr:hover{background:var(--panel2)}
 tbody tr:last-child td{border-bottom:0}
+/* still-open trades/positions: a left accent bar + faint tint so they stand out from closed rows */
+tr.open-row td{background:color-mix(in srgb, var(--blue) 9%, transparent)}
+tr.open-row:hover td{background:color-mix(in srgb, var(--blue) 16%, transparent)}
+tr.open-row td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
+.openkey{display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:11px}
+.openkey::before{content:"";width:11px;height:11px;border-radius:3px;background:color-mix(in srgb, var(--blue) 22%, transparent);box-shadow:inset 3px 0 0 var(--blue)}
 .filterrow th{position:static;background:var(--panel2);padding:5px 8px;border-bottom:1px solid var(--line)}
 .filterrow .ftext,.filterrow .fsel{width:100%;min-width:70px;box-sizing:border-box;background:var(--bg2);color:var(--txt);
   border:1px solid var(--line);border-radius:6px;font-family:var(--mono);font-size:11px;padding:4px 7px;font-weight:500;letter-spacing:0;text-transform:none}
@@ -1927,10 +1933,16 @@ function renderTradeSummary(rows,plByTrade){
     `<span class="sep">·</span>`+
     `<span class="stat"><b class="mut">${closed}</b> <span class="k">closed</span></span>`+
     `<span class="stat"><b class="mut">${openCount}</b> <span class="k">open</span></span>`+
-    `<span class="stat"><b class="mut">${rows.length}</b> <span class="k">rows</span></span>`;
+    `<span class="stat"><b class="mut">${rows.length}</b> <span class="k">rows</span></span>`+
+    `<span class="sep">·</span><span class="openkey">open</span>`;
 }
-function tradeRowHtml(t,pl){
-  if(isFutureRT(t)){const open=!(t.exit!=null&&t.exit!==""&&isFinite(num(t.exit)));return `<tr>
+// a row is "open" if the future has no exit, or a stock/option opening leg whose position still has size
+function tradeOpen(o,pl,openByKey){
+  if(isFutureRT(o))return !(o.exit!=null&&o.exit!==""&&isFinite(num(o.exit)));
+  return pl==null&&!!(openByKey&&openByKey[positionKey(o)]);
+}
+function tradeRowHtml(t,pl,isOpen){
+  if(isFutureRT(t)){const open=!(t.exit!=null&&t.exit!==""&&isFinite(num(t.exit)));return `<tr${isOpen?' class="open-row"':''}>
     <td class="l">${t.date}</td>
     <td class="l"><span class="badge future">future</span></td>
     <td class="l">${t.symbol||""}</td>
@@ -1946,7 +1958,7 @@ function tradeRowHtml(t,pl){
     <td><button class="iconbtn" data-edit="${t.id}">edit</button>
         <button class="iconbtn del" data-del="${t.id}">del</button></td>
   </tr>`;}
-  return `<tr>
+  return `<tr${isOpen?' class="open-row"':''}>
     <td class="l">${t.date}</td>
     <td class="l"><span class="badge ${t.instrument}">${t.instrument}</span></td>
     <td class="l">${symLabel(t)}</td>
@@ -1965,7 +1977,7 @@ function tradeRowHtml(t,pl){
 function spreadRowHtml(s){
   const closed=s.status==="closed",netO=spreadNetOpen(s),pl=closed?spreadRealized(s):null;
   const legtxt=s.legs.map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""} ${fmtNum(l.strike)}`).join(" / ");
-  return `<tr>
+  return `<tr${closed?'':' class="open-row"'}>
     <td class="l">${s.dateOpened||s.dateClosed||"—"}${closed?`<div class="legsub">closed ${s.dateClosed}</div>`:""}</td>
     <td class="l"><span class="badge spread">sell-side</span></td>
     <td class="l">${s.symbol||""}<div class="legsub">${legtxt}</div></td>
@@ -1983,7 +1995,8 @@ function spreadRowHtml(s){
   </tr>`;}
 function renderTrades(){
   const plByTrade={};
-  for(const r of computePnl(expandTrades(state.trades)).realized){plByTrade[r.closeId]=(plByTrade[r.closeId]||0)+r.pnl;}
+  const _pnl=computePnl(expandTrades(state.trades));const openByKey=_pnl.openByKey;
+  for(const r of _pnl.realized){plByTrade[r.closeId]=(plByTrade[r.closeId]||0)+r.pnl;}
   // unified accessor over a tagged item {k:'trade'|'spread', o:obj}
   const gv=(it,c)=>{const o=it.o;
     if(it.k==="trade"&&isFutureRT(o))return c==="date"?o.date:c==="instrument"?"future":c==="symbol"?o.symbol:c==="account"?(o.account||""):c==="action"?(o.direction||""):
@@ -2014,7 +2027,7 @@ function renderTrades(){
   const cols=[["date","Date","l"],["instrument","Instrument","l"],["symbol","Symbol","l"],["account","Account","l"],["dte","DTE",""],["expiry","Expiry",""],["strike","Strike",""],["action","Side","l"],["quantity","Qty",""],["price","Price",""],["fees","Fees",""],["pl","Realized P/L",""]];
   const head=headFilter(cols,tradeSort,kinds,tradeFilters,distinct,true);
   if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="13"><div class="empty">no trades match — adjust filters, add one above, or import a CSV</div></td></tr></tbody>`;wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);fitWideTable("#tradeTable");return;}
-  t.innerHTML=head+`<tbody>`+rows.map(it=>it.k==="trade"?tradeRowHtml(it.o,plByTrade[it.o.id]):spreadRowHtml(it.o)).join("")+`</tbody>`;
+  t.innerHTML=head+`<tbody>`+rows.map(it=>it.k==="trade"?tradeRowHtml(it.o,plByTrade[it.o.id],tradeOpen(it.o,plByTrade[it.o.id],openByKey)):spreadRowHtml(it.o)).join("")+`</tbody>`;
   wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);
   fitWideTable("#tradeTable");
   t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
@@ -2306,14 +2319,15 @@ function renderSpreads(){
     `<span class="stat"><span class="k">Net</span><b class="${cls(realT+unrealT)}">${fmtSignedColored(realT+unrealT)}</b></span>`+
     `<span class="sep">·</span>`+
     `<span class="stat"><b class="mut">${clS.length}</b> <span class="k">closed</span></span>`+
-    `<span class="stat"><b class="mut">${opS.length}</b> <span class="k">open</span></span>`;
+    `<span class="stat"><b class="mut">${opS.length}</b> <span class="k">open</span></span>`+
+    `<span class="sep">·</span><span class="openkey">open</span>`;
   const cols=[["date","Opened","l"],["type","Type","l"],["symbol","Symbol","l"],["account","Account","l"],["exp","Exp","l"],["strike","Strike",""],["qty","Qty",""],["netOpen","Net Open",""],["netClose","Net Close",""],["pnl","P&L",""]];
   const head=headFilter(cols,spreadSort,kinds,spreadFilters,distinct,true);
   if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="11"><div class="empty">no sell-side trades match these filters</div></td></tr></tbody>`;wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp","strike"]);return;}
   t.innerHTML=head+`<tbody>`+rows.map(s=>{
     const netO=spreadNetOpen(s),netC=spreadNetClose(s),closed=s.status==="closed",pnl=closed?spreadRealized(s):null,un=netO*num(s.quantity)*100-num(s.fees);
     const legtxt=s.legs.map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0].toUpperCase()} ${fmtNum(l.strike)}`).join(" / ");
-    return `<tr>
+    return `<tr${closed?'':' class="open-row"'}>
       <td class="l">${s.dateOpened||"—"}${closed?`<div class="legsub">closed ${s.dateClosed}</div>`:""}</td>
       <td class="l"><span class="badge spread">${s.type}</span></td>
       <td class="l">${s.symbol}<div class="legsub">${legtxt}</div></td>
