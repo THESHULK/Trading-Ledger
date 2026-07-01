@@ -493,7 +493,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <div class="row">
         <button class="btn" id="saveTrade">Add Trade</button>
         <button class="btn ghost" id="cancelEdit" style="display:none">Cancel</button>
-        <button class="btn ghost" id="shotBtn" title="Reads a broker screenshot with your AI key and fills the form — the image is sent to your AI provider. Works best with a vision model (Gemini, GPT-4o, Claude).">📷 Import from screenshot</button>
+        <button class="btn ghost" id="shotBtn" title="Reads a broker screenshot with your AI key and fills the form — or just paste (Ctrl/Cmd+V). The image is sent to your AI provider; works best with a vision model (Gemini, GPT-4o, Claude).">📷 Import from screenshot</button>
         <input type="file" id="shotFile" accept="image/*" style="display:none">
         <span class="note" id="shotStatus"></span>
         <span class="note" id="formNote"></span>
@@ -533,6 +533,9 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <div class="row">
         <button class="btn" id="saveSpread">Add Trade</button>
         <button class="btn ghost" id="cancelSpread" style="display:none">Cancel</button>
+        <button class="btn ghost" id="spreadShotBtn" title="Reads a spread screenshot with your AI key and fills the form — or just paste (Ctrl/Cmd+V). The image is sent to your AI provider; works best with a vision model (Gemini, GPT-4o, Claude).">📷 Import from screenshot</button>
+        <input type="file" id="spreadShotFile" accept="image/*" style="display:none">
+        <span class="note" id="spreadShotStatus"></span>
         <span class="note">Net credit = collected at open; debit = paid. Closed P&amp;L = (net open − net close) × qty × 100 − fees. Leave close prices &amp; date blank to log an open position.</span>
       </div>
     </div>
@@ -2118,11 +2121,14 @@ function resetForm(){
 const SHOT_PROMPT=`You are reading a screenshot from a broker or trading app showing ONE position or order. Extract it and reply with ONLY a JSON object (no markdown, no commentary), using null for anything not shown:
 {"instrument":"stock|option|future","symbol":"TICKER","action":"buy|sell","quantity":number,"price":number,"optionType":"call|put|null","strike":number|null,"expiry":"YYYY-MM-DD|null","direction":"long|short|null","entry":number|null,"exit":number|null,"account":"string|null","fees":number|null}
 Rules: options have a strike and expiry — put the option premium per share in "price". Futures are contracts (ES, NQ, CL, GC, MES, etc.) — use direction/entry/exit. Stocks use action (buy/sell) and price. Uppercase the symbol. Dates as YYYY-MM-DD. Numbers only — no $, no commas. If the image is not a trade, return {"error":"not a trade screenshot"}.`;
-function shotVisionBody(prov,model,mime,b64,dataUrl){
+const SHOT_SPREAD_PROMPT=`You are reading a screenshot of ONE options spread / sell-side position (covered call, cash-secured put, put or call credit/debit spread). Reply with ONLY a JSON object (no markdown), null where unknown:
+{"symbol":"TICKER","expiry":"YYYY-MM-DD","quantity":number,"legs":[{"side":"short|long","optionType":"call|put","strike":number,"open":number,"close":number|null}],"account":"string|null","fees":number|null,"dateOpened":"YYYY-MM-DD|null","dateClosed":"YYYY-MM-DD|null"}
+Rules: one object per leg. "open" is the per-share premium when the leg was opened (credit received for short legs, debit paid for long legs); "close" is the closing premium if the position is closed, else null. Uppercase symbol. Dates YYYY-MM-DD. Numbers only — no $, no commas. If it is not an options position, return {"error":"not an options position"}.`;
+function shotVisionBody(prov,model,mime,b64,dataUrl,prompt){
   if(prov==="gemini"){const gc={temperature:0,maxOutputTokens:1024};if(/2\.5/.test(model))gc.thinkingConfig={thinkingBudget:512};
-    return {contents:[{role:"user",parts:[{text:SHOT_PROMPT},{inline_data:{mime_type:mime,data:b64}}]}],generationConfig:gc};}
-  if(prov==="anthropic")return {model,max_tokens:1024,messages:[{role:"user",content:[{type:"text",text:SHOT_PROMPT},{type:"image",source:{type:"base64",media_type:mime,data:b64}}]}]};
-  return {model,max_tokens:1024,temperature:0,messages:[{role:"user",content:[{type:"text",text:SHOT_PROMPT},{type:"image_url",image_url:{url:dataUrl}}]}]};
+    return {contents:[{role:"user",parts:[{text:prompt},{inline_data:{mime_type:mime,data:b64}}]}],generationConfig:gc};}
+  if(prov==="anthropic")return {model,max_tokens:1024,messages:[{role:"user",content:[{type:"text",text:prompt},{type:"image",source:{type:"base64",media_type:mime,data:b64}}]}]};
+  return {model,max_tokens:1024,temperature:0,messages:[{role:"user",content:[{type:"text",text:prompt},{type:"image_url",image_url:{url:dataUrl}}]}]};
 }
 function parseLooseJson(t){
   if(!t)return null;
@@ -2142,19 +2148,57 @@ async function shotPrepImage(f){
       try{c.getContext("2d").drawImage(img,0,0,w,h);res(c.toDataURL("image/jpeg",0.9));}catch(e){res(url);}};
     img.onerror=()=>res(url);img.src=url;});
 }
-async function aiExtractPosition(dataUrl){
+async function aiVisionExtract(dataUrl,prompt){
   const prov=aiProv(),key=aiKeyOf(prov);
   if(!key)throw {msg:"Set up an AI key first (AI Trade Coach on the Dashboard)."};
   const model=aiModels(prov)[0];
   const mm=/^data:([^;]+);base64,(.*)$/.exec(dataUrl||"");
   if(!mm)throw {msg:"Couldn't read that image."};
   const P=AI_PROVIDERS[prov];
-  const r=await fetch(P.endpoint(model,key),{method:"POST",headers:P.headers(key),body:JSON.stringify(shotVisionBody(prov,model,mm[1],mm[2],dataUrl))});
+  const r=await fetch(P.endpoint(model,key),{method:"POST",headers:P.headers(key),body:JSON.stringify(shotVisionBody(prov,model,mm[1],mm[2],dataUrl,prompt))});
   if(!r.ok){let detail="";try{detail=P.err(await r.json())||"";}catch(e){}throw {msg:`HTTP ${r.status}${detail?" — "+detail:""}`};}
   const obj=parseLooseJson(P.extract(await r.json()));
   if(!obj)throw {msg:"The model didn't return readable data — try a clearer screenshot."};
   if(obj.error)throw {msg:obj.error};
   return obj;
+}
+// pick the spread type from the extracted legs (more reliable than asking the model to name it)
+function inferSpreadType(legs){
+  if(!Array.isArray(legs)||!legs.length)return null;
+  const puts=legs.filter(l=>l.optionType==="put"),calls=legs.filter(l=>l.optionType==="call");
+  if(legs.length===1){const l=legs[0];
+    if(l.side==="short"&&l.optionType==="call")return "CC";
+    if(l.side==="short"&&l.optionType==="put")return "CSP";return null;}
+  if(puts.length===2){const s=puts.find(l=>l.side==="short"),lo=puts.find(l=>l.side==="long");
+    if(s&&lo&&isFinite(+s.strike)&&isFinite(+lo.strike))return +s.strike>+lo.strike?"PCS":"PDS";}
+  if(calls.length===2){const s=calls.find(l=>l.side==="short"),lo=calls.find(l=>l.side==="long");
+    if(s&&lo&&isFinite(+s.strike)&&isFinite(+lo.strike))return +s.strike<+lo.strike?"CCS":"CDS";}
+  return null;
+}
+function prefillSpreadFromShot(d){
+  const numOk=v=>v!=null&&v!==""&&isFinite(+v);
+  const type=SPREAD_TYPES[d.type]?d.type:inferSpreadType(d.legs);
+  if(!type)throw {msg:"Couldn't identify the spread type from the image."};
+  resetSpreadForm();
+  $("#sp-type").value=type;renderLegInputs();
+  if(d.symbol)$("#sp-sym").value=String(d.symbol).toUpperCase().trim();
+  if(d.account)$("#sp-acct").value=String(d.account);
+  if(d.expiry)$("#sp-exp").value=String(d.expiry);
+  if(numOk(d.quantity))$("#sp-qty").value=+d.quantity;
+  if(d.dateOpened)$("#sp-open").value=String(d.dateOpened);
+  if(d.dateClosed)$("#sp-close").value=String(d.dateClosed);
+  if(numOk(d.fees))$("#sp-fees").value=+d.fees;
+  const defs=SPREAD_TYPES[type].legs,legs=(d.legs||[]).slice(),used=legs.map(()=>false);
+  const take=pred=>{for(let i=0;i<legs.length;i++)if(!used[i]&&pred(legs[i])){used[i]=true;return legs[i];}return null;};
+  defs.forEach((def,i)=>{
+    const leg=take(l=>l.side===def.side&&l.optionType===def.optionType)||take(l=>l.optionType===def.optionType)||take(()=>true);
+    if(!leg)return;
+    const st=$(`.leg-strike[data-i="${i}"]`),op=$(`.leg-open[data-i="${i}"]`),cl=$(`.leg-close[data-i="${i}"]`);
+    if(st&&numOk(leg.strike))st.value=+leg.strike;
+    if(op&&numOk(leg.open))op.value=+leg.open;
+    if(cl&&numOk(leg.close))cl.value=+leg.close;
+  });
+  updateSpreadCalc();
 }
 function prefillTradeFromShot(d){
   const numOk=v=>v!=null&&v!==""&&isFinite(+v);
@@ -2189,10 +2233,24 @@ async function importShot(file){
   btn.disabled=true;st.style.color="";st.textContent=`Reading screenshot with ${AI_PROVIDERS[aiProv()].label.split(" ·")[0]}…`;
   try{
     const dataUrl=await shotPrepImage(file);
-    const d=await aiExtractPosition(dataUrl);
+    const d=await aiVisionExtract(dataUrl,SHOT_PROMPT);
     prefillTradeFromShot(d);
     st.innerHTML=`<span class="pos">✓ Filled from screenshot — check the fields, then Save.</span>`;
     window.scrollTo({top:0,behavior:"smooth"});$("#f-sym").focus();
+  }catch(err){st.textContent="";toast("Screenshot import failed: "+(err&&err.msg?err.msg:err),true);}
+  finally{btn.disabled=false;}
+}
+async function importSpreadShot(file){
+  const st=$("#spreadShotStatus"),btn=$("#spreadShotBtn");
+  if(!aiKeyOf(aiProv())){toast("Set up an AI key in the AI Trade Coach (Dashboard) first",true);return;}
+  if(!file||!/^image\//.test(file.type)){toast("Please choose an image file",true);return;}
+  btn.disabled=true;st.style.color="";st.textContent=`Reading screenshot with ${AI_PROVIDERS[aiProv()].label.split(" ·")[0]}…`;
+  try{
+    const dataUrl=await shotPrepImage(file);
+    const d=await aiVisionExtract(dataUrl,SHOT_SPREAD_PROMPT);
+    prefillSpreadFromShot(d);
+    st.innerHTML=`<span class="pos">✓ Filled from screenshot — check the legs, then Save.</span>`;
+    window.scrollTo({top:0,behavior:"smooth"});$("#sp-sym").focus();
   }catch(err){st.textContent="";toast("Screenshot import failed: "+(err&&err.msg?err.msg:err),true);}
   finally{btn.disabled=false;}
 }
@@ -2541,6 +2599,16 @@ function init(){
   $("#cancelEdit").onclick=resetForm;
   $("#shotBtn").onclick=()=>{if(!aiKeyOf(aiProv())){toast("Set up an AI key in the AI Trade Coach (Dashboard) first",true);return;}$("#shotFile").click();};
   $("#shotFile").onchange=e=>{const f=e.target.files&&e.target.files[0];e.target.value="";if(f)importShot(f);};
+  $("#spreadShotBtn").onclick=()=>{if(!aiKeyOf(aiProv())){toast("Set up an AI key in the AI Trade Coach (Dashboard) first",true);return;}$("#spreadShotFile").click();};
+  $("#spreadShotFile").onchange=e=>{const f=e.target.files&&e.target.files[0];e.target.value="";if(f)importSpreadShot(f);};
+  // paste a screenshot straight into whichever tab is open
+  document.addEventListener("paste",e=>{
+    const items=e.clipboardData&&e.clipboardData.items;if(!items)return;
+    let file=null;for(const it of items){if(it.type&&it.type.indexOf("image/")===0){file=it.getAsFile();break;}}
+    if(!file)return;
+    if($("#view-spreads").classList.contains("on")){e.preventDefault();importSpreadShot(file);}
+    else if($("#view-trades").classList.contains("on")){e.preventDefault();importShot(file);}
+  });
   $("#hideSellSide").onchange=e=>{hideSellSide=e.target.checked;renderTrades();};
   populateSpreadTypes();resetSpreadForm();
   $("#sp-type").onchange=renderLegInputs;
