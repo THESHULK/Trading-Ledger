@@ -493,6 +493,9 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <div class="row">
         <button class="btn" id="saveTrade">Add Trade</button>
         <button class="btn ghost" id="cancelEdit" style="display:none">Cancel</button>
+        <button class="btn ghost" id="shotBtn" title="Reads a broker screenshot with your AI key and fills the form — the image is sent to your AI provider. Works best with a vision model (Gemini, GPT-4o, Claude).">📷 Import from screenshot</button>
+        <input type="file" id="shotFile" accept="image/*" style="display:none">
+        <span class="note" id="shotStatus"></span>
         <span class="note" id="formNote"></span>
       </div>
     </div>
@@ -2108,6 +2111,91 @@ function resetForm(){
   $("#formTitle").textContent="Add Trade";$("#saveTrade").textContent="Add Trade";$("#cancelEdit").style.display="none";
   syncFormFields();
 }
+
+/* ===================== SCREENSHOT IMPORT (vision, review before saving) =====================
+   Sends the image to the user's currently-selected AI provider (their key) and extracts one
+   position, then pre-fills the form for review. Nothing is saved automatically. */
+const SHOT_PROMPT=`You are reading a screenshot from a broker or trading app showing ONE position or order. Extract it and reply with ONLY a JSON object (no markdown, no commentary), using null for anything not shown:
+{"instrument":"stock|option|future","symbol":"TICKER","action":"buy|sell","quantity":number,"price":number,"optionType":"call|put|null","strike":number|null,"expiry":"YYYY-MM-DD|null","direction":"long|short|null","entry":number|null,"exit":number|null,"account":"string|null","fees":number|null}
+Rules: options have a strike and expiry — put the option premium per share in "price". Futures are contracts (ES, NQ, CL, GC, MES, etc.) — use direction/entry/exit. Stocks use action (buy/sell) and price. Uppercase the symbol. Dates as YYYY-MM-DD. Numbers only — no $, no commas. If the image is not a trade, return {"error":"not a trade screenshot"}.`;
+function shotVisionBody(prov,model,mime,b64,dataUrl){
+  if(prov==="gemini"){const gc={temperature:0,maxOutputTokens:1024};if(/2\.5/.test(model))gc.thinkingConfig={thinkingBudget:512};
+    return {contents:[{role:"user",parts:[{text:SHOT_PROMPT},{inline_data:{mime_type:mime,data:b64}}]}],generationConfig:gc};}
+  if(prov==="anthropic")return {model,max_tokens:1024,messages:[{role:"user",content:[{type:"text",text:SHOT_PROMPT},{type:"image",source:{type:"base64",media_type:mime,data:b64}}]}]};
+  return {model,max_tokens:1024,temperature:0,messages:[{role:"user",content:[{type:"text",text:SHOT_PROMPT},{type:"image_url",image_url:{url:dataUrl}}]}]};
+}
+function parseLooseJson(t){
+  if(!t)return null;
+  let s=String(t).trim().replace(/^```(?:json)?\s*/i,"").replace(/```\s*$/,"").trim();
+  const a=s.indexOf("{"),b=s.lastIndexOf("}");if(a>=0&&b>a)s=s.slice(a,b+1);
+  try{return JSON.parse(s);}catch(e){return null;}
+}
+function shotToDataUrl(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(new Error("read failed"));r.readAsDataURL(f);});}
+// downscale big screenshots so the payload stays small (keeps small text legible at ~1600px)
+async function shotPrepImage(f){
+  const url=await shotToDataUrl(f);
+  return new Promise(res=>{const img=new Image();
+    img.onload=()=>{const max=1600;let w=img.width,h=img.height;
+      if(Math.max(w,h)<=max)return res(url);
+      const s=max/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s);
+      const c=document.createElement("canvas");c.width=w;c.height=h;
+      try{c.getContext("2d").drawImage(img,0,0,w,h);res(c.toDataURL("image/jpeg",0.9));}catch(e){res(url);}};
+    img.onerror=()=>res(url);img.src=url;});
+}
+async function aiExtractPosition(dataUrl){
+  const prov=aiProv(),key=aiKeyOf(prov);
+  if(!key)throw {msg:"Set up an AI key first (AI Trade Coach on the Dashboard)."};
+  const model=aiModels(prov)[0];
+  const mm=/^data:([^;]+);base64,(.*)$/.exec(dataUrl||"");
+  if(!mm)throw {msg:"Couldn't read that image."};
+  const P=AI_PROVIDERS[prov];
+  const r=await fetch(P.endpoint(model,key),{method:"POST",headers:P.headers(key),body:JSON.stringify(shotVisionBody(prov,model,mm[1],mm[2],dataUrl))});
+  if(!r.ok){let detail="";try{detail=P.err(await r.json())||"";}catch(e){}throw {msg:`HTTP ${r.status}${detail?" — "+detail:""}`};}
+  const obj=parseLooseJson(P.extract(await r.json()));
+  if(!obj)throw {msg:"The model didn't return readable data — try a clearer screenshot."};
+  if(obj.error)throw {msg:obj.error};
+  return obj;
+}
+function prefillTradeFromShot(d){
+  const numOk=v=>v!=null&&v!==""&&isFinite(+v);
+  resetForm();
+  const inst=["stock","option","future"].includes(d.instrument)?d.instrument:"stock";
+  $("#f-inst").value=inst;$("#f-mult").dataset.auto="1";syncFormFields();
+  if(!$("#f-date").value)$("#f-date").value=today();
+  if(d.symbol)$("#f-sym").value=String(d.symbol).toUpperCase().trim();
+  if(d.account)$("#f-acct").value=String(d.account);
+  if(numOk(d.fees))$("#f-fees").value=+d.fees;
+  if(numOk(d.quantity))$("#f-qty").value=+d.quantity;
+  if(inst==="future"){
+    $("#f-fdir").value=d.direction==="short"?"short":"long";
+    const entry=numOk(d.entry)?+d.entry:(numOk(d.price)?+d.price:null);
+    if(entry!=null)$("#f-entry").value=entry;
+    if(numOk(d.exit))$("#f-exit").value=+d.exit;
+  }else{
+    $("#f-act").value=d.action==="sell"?"sell":"buy";
+    if(numOk(d.price))$("#f-price").value=+d.price;
+    if(inst==="option"){
+      if(d.expiry)$("#f-exp").value=String(d.expiry);
+      if(numOk(d.strike))$("#f-strike").value=+d.strike;
+      $("#f-otype").value=d.optionType==="put"?"put":"call";
+    }
+  }
+  syncFormFields(); // re-run so the futures multiplier auto-fills from the symbol
+}
+async function importShot(file){
+  const st=$("#shotStatus"),btn=$("#shotBtn");
+  if(!aiKeyOf(aiProv())){toast("Set up an AI key in the AI Trade Coach (Dashboard) first",true);return;}
+  if(!file||!/^image\//.test(file.type)){toast("Please choose an image file",true);return;}
+  btn.disabled=true;st.style.color="";st.textContent=`Reading screenshot with ${AI_PROVIDERS[aiProv()].label.split(" ·")[0]}…`;
+  try{
+    const dataUrl=await shotPrepImage(file);
+    const d=await aiExtractPosition(dataUrl);
+    prefillTradeFromShot(d);
+    st.innerHTML=`<span class="pos">✓ Filled from screenshot — check the fields, then Save.</span>`;
+    window.scrollTo({top:0,behavior:"smooth"});$("#f-sym").focus();
+  }catch(err){st.textContent="";toast("Screenshot import failed: "+(err&&err.msg?err.msg:err),true);}
+  finally{btn.disabled=false;}
+}
 function saveTrade(){
   const inst=$("#f-inst").value;const sym=($("#f-sym").value||"").toUpperCase().trim();
   const qty=parseFloat($("#f-qty").value);
@@ -2451,6 +2539,8 @@ function init(){
   $("#f-mult").oninput=()=>{$("#f-mult").dataset.auto="0";};
   $("#saveTrade").onclick=saveTrade;
   $("#cancelEdit").onclick=resetForm;
+  $("#shotBtn").onclick=()=>{if(!aiKeyOf(aiProv())){toast("Set up an AI key in the AI Trade Coach (Dashboard) first",true);return;}$("#shotFile").click();};
+  $("#shotFile").onchange=e=>{const f=e.target.files&&e.target.files[0];e.target.value="";if(f)importShot(f);};
   $("#hideSellSide").onchange=e=>{hideSellSide=e.target.checked;renderTrades();};
   populateSpreadTypes();resetSpreadForm();
   $("#sp-type").onchange=renderLegInputs;
