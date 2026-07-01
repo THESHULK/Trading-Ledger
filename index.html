@@ -279,6 +279,15 @@ tr.open-row td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
 .opt-only{display:none}
 .empty{text-align:center;color:var(--faint);font-family:var(--mono);font-size:13px;padding:40px 16px}
+/* screenshot-import drop zone: click, drag-and-drop, or paste */
+.dropzone{margin-top:12px;border:1.5px dashed var(--line2);border-radius:10px;background:var(--bg2);padding:14px 16px;
+  display:flex;flex-direction:column;gap:3px;align-items:center;text-align:center;cursor:pointer;transition:border-color .15s,background .15s}
+.dropzone:hover,.dropzone:focus-visible{border-color:var(--green-dim);outline:none}
+.dropzone.drag{border-color:var(--green);background:color-mix(in srgb, var(--green) 9%, var(--bg2))}
+.dropzone .dz-main{font-size:13px;font-weight:600;color:var(--txt)}
+.dropzone .dz-sub{font-size:11px;color:var(--muted)}
+.dropzone.busy{opacity:.7;pointer-events:none}
+.dropzone .note{margin-top:2px}
 .note{font-family:var(--mono);font-size:11.5px;color:var(--muted);line-height:1.7}
 .note code{background:var(--bg2);border:1px solid var(--line);border-radius:4px;padding:1px 6px;color:var(--green)}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);
@@ -493,11 +502,14 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <div class="row">
         <button class="btn" id="saveTrade">Add Trade</button>
         <button class="btn ghost" id="cancelEdit" style="display:none">Cancel</button>
-        <button class="btn ghost" id="shotBtn" title="Reads a broker screenshot with your AI key and fills the form — or just paste (Ctrl/Cmd+V). The image is sent to your AI provider; works best with a vision model (Gemini, GPT-4o, Claude).">📷 Import from screenshot</button>
-        <input type="file" id="shotFile" accept="image/*" style="display:none">
-        <span class="note" id="shotStatus"></span>
         <span class="note" id="formNote"></span>
       </div>
+      <div class="dropzone" id="shotDrop" tabindex="0" role="button" title="The image is sent to your AI provider; works best with a vision model (Gemini, GPT-4o, Claude).">
+        <span class="dz-main">📷 Drop or paste a screenshot, or click to browse</span>
+        <span class="dz-sub">AI reads your position and fills the form above — you review before saving</span>
+        <span class="note" id="shotStatus"></span>
+      </div>
+      <input type="file" id="shotFile" accept="image/*" style="display:none">
     </div>
 
     <p class="note">Single-leg stock/option/future executions plus your sell-side spreads (one summary row each). Spread rows are read-only here — use <b>edit ↗</b> to manage them on the Sell-Side tab. <label style="margin-left:6px;cursor:pointer;user-select:none"><input type="checkbox" id="hideSellSide" style="vertical-align:middle"> hide sell-side</label></p>
@@ -533,11 +545,14 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <div class="row">
         <button class="btn" id="saveSpread">Add Trade</button>
         <button class="btn ghost" id="cancelSpread" style="display:none">Cancel</button>
-        <button class="btn ghost" id="spreadShotBtn" title="Reads a spread screenshot with your AI key and fills the form — or just paste (Ctrl/Cmd+V). The image is sent to your AI provider; works best with a vision model (Gemini, GPT-4o, Claude).">📷 Import from screenshot</button>
-        <input type="file" id="spreadShotFile" accept="image/*" style="display:none">
-        <span class="note" id="spreadShotStatus"></span>
         <span class="note">Net credit = collected at open; debit = paid. Closed P&amp;L = (net open − net close) × qty × 100 − fees. Leave close prices &amp; date blank to log an open position.</span>
       </div>
+      <div class="dropzone" id="spreadShotDrop" tabindex="0" role="button" title="The image is sent to your AI provider; works best with a vision model (Gemini, GPT-4o, Claude).">
+        <span class="dz-main">📷 Drop or paste a spread screenshot, or click to browse</span>
+        <span class="dz-sub">AI reads the spread and fills the form above — you review before saving</span>
+        <span class="note" id="spreadShotStatus"></span>
+      </div>
+      <input type="file" id="spreadShotFile" accept="image/*" style="display:none">
     </div>
     <div class="tradesummary" id="spreadSummary"></div>
     <div class="tablewrap"><table id="spreadTable"></table></div>
@@ -2227,10 +2242,10 @@ function prefillTradeFromShot(d){
   syncFormFields(); // re-run so the futures multiplier auto-fills from the symbol
 }
 async function importShot(file){
-  const st=$("#shotStatus"),btn=$("#shotBtn");
+  const st=$("#shotStatus"),dz=$("#shotDrop");
   if(!aiKeyOf(aiProv())){toast("Set up an AI key in the AI Trade Coach (Dashboard) first",true);return;}
   if(!file||!/^image\//.test(file.type)){toast("Please choose an image file",true);return;}
-  btn.disabled=true;st.style.color="";st.textContent=`Reading screenshot with ${AI_PROVIDERS[aiProv()].label.split(" ·")[0]}…`;
+  dz&&dz.classList.add("busy");st.style.color="";st.textContent=`Reading screenshot with ${AI_PROVIDERS[aiProv()].label.split(" ·")[0]}…`;
   try{
     const dataUrl=await shotPrepImage(file);
     const d=await aiVisionExtract(dataUrl,SHOT_PROMPT);
@@ -2238,13 +2253,26 @@ async function importShot(file){
     st.innerHTML=`<span class="pos">✓ Filled from screenshot — check the fields, then Save.</span>`;
     window.scrollTo({top:0,behavior:"smooth"});$("#f-sym").focus();
   }catch(err){st.textContent="";toast("Screenshot import failed: "+(err&&err.msg?err.msg:err),true);}
-  finally{btn.disabled=false;}
+  finally{dz&&dz.classList.remove("busy");}
+}
+// make a drop zone respond to click, keyboard, and drag-and-drop (paste is handled globally)
+function wireDropzone(dropSel,fileSel,importFn){
+  const dz=$(dropSel),fi=$(fileSel);if(!dz||!fi)return;
+  const guard=()=>{if(!aiKeyOf(aiProv())){toast("Set up an AI key in the AI Trade Coach (Dashboard) first",true);return false;}return true;};
+  dz.onclick=()=>{if(guard())fi.click();};
+  dz.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();if(guard())fi.click();}};
+  fi.onchange=e=>{const f=e.target.files&&e.target.files[0];e.target.value="";if(f)importFn(f);};
+  dz.addEventListener("dragover",e=>{e.preventDefault();dz.classList.add("drag");});
+  dz.addEventListener("dragleave",e=>{if(!dz.contains(e.relatedTarget))dz.classList.remove("drag");});
+  dz.addEventListener("drop",e=>{e.preventDefault();dz.classList.remove("drag");
+    const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+    if(f&&guard())importFn(f);});
 }
 async function importSpreadShot(file){
-  const st=$("#spreadShotStatus"),btn=$("#spreadShotBtn");
+  const st=$("#spreadShotStatus"),dz=$("#spreadShotDrop");
   if(!aiKeyOf(aiProv())){toast("Set up an AI key in the AI Trade Coach (Dashboard) first",true);return;}
   if(!file||!/^image\//.test(file.type)){toast("Please choose an image file",true);return;}
-  btn.disabled=true;st.style.color="";st.textContent=`Reading screenshot with ${AI_PROVIDERS[aiProv()].label.split(" ·")[0]}…`;
+  dz&&dz.classList.add("busy");st.style.color="";st.textContent=`Reading screenshot with ${AI_PROVIDERS[aiProv()].label.split(" ·")[0]}…`;
   try{
     const dataUrl=await shotPrepImage(file);
     const d=await aiVisionExtract(dataUrl,SHOT_SPREAD_PROMPT);
@@ -2252,7 +2280,7 @@ async function importSpreadShot(file){
     st.innerHTML=`<span class="pos">✓ Filled from screenshot — check the legs, then Save.</span>`;
     window.scrollTo({top:0,behavior:"smooth"});$("#sp-sym").focus();
   }catch(err){st.textContent="";toast("Screenshot import failed: "+(err&&err.msg?err.msg:err),true);}
-  finally{btn.disabled=false;}
+  finally{dz&&dz.classList.remove("busy");}
 }
 function saveTrade(){
   const inst=$("#f-inst").value;const sym=($("#f-sym").value||"").toUpperCase().trim();
@@ -2597,10 +2625,8 @@ function init(){
   $("#f-mult").oninput=()=>{$("#f-mult").dataset.auto="0";};
   $("#saveTrade").onclick=saveTrade;
   $("#cancelEdit").onclick=resetForm;
-  $("#shotBtn").onclick=()=>{if(!aiKeyOf(aiProv())){toast("Set up an AI key in the AI Trade Coach (Dashboard) first",true);return;}$("#shotFile").click();};
-  $("#shotFile").onchange=e=>{const f=e.target.files&&e.target.files[0];e.target.value="";if(f)importShot(f);};
-  $("#spreadShotBtn").onclick=()=>{if(!aiKeyOf(aiProv())){toast("Set up an AI key in the AI Trade Coach (Dashboard) first",true);return;}$("#spreadShotFile").click();};
-  $("#spreadShotFile").onchange=e=>{const f=e.target.files&&e.target.files[0];e.target.value="";if(f)importSpreadShot(f);};
+  wireDropzone("#shotDrop","#shotFile",importShot);
+  wireDropzone("#spreadShotDrop","#spreadShotFile",importSpreadShot);
   // paste a screenshot straight into whichever tab is open
   document.addEventListener("paste",e=>{
     const items=e.clipboardData&&e.clipboardData.items;if(!items)return;
@@ -2609,6 +2635,10 @@ function init(){
     if($("#view-spreads").classList.contains("on")){e.preventDefault();importSpreadShot(file);}
     else if($("#view-trades").classList.contains("on")){e.preventDefault();importShot(file);}
   });
+  // stop a stray file drop elsewhere on the page from navigating the browser away from the app
+  const hasFiles=e=>e.dataTransfer&&Array.from(e.dataTransfer.types||[]).includes("Files");
+  window.addEventListener("dragover",e=>{if(hasFiles(e))e.preventDefault();});
+  window.addEventListener("drop",e=>{if(hasFiles(e)&&!(e.target.closest&&e.target.closest(".dropzone")))e.preventDefault();});
   $("#hideSellSide").onchange=e=>{hideSellSide=e.target.checked;renderTrades();};
   populateSpreadTypes();resetSpreadForm();
   $("#sp-type").onchange=renderLegInputs;
