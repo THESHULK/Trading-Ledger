@@ -1124,6 +1124,8 @@ function futureDateOK(...dates){
 }
 function toast(msg,err){const t=$("#toast");t.textContent=msg;t.className="toast show"+(err?" err":"");
   clearTimeout(t._t);t._t=setTimeout(()=>t.className="toast",2600);}
+// guard destructive actions; returns true only if the user confirms
+function confirmDelete(what){return window.confirm(`Delete ${what}?\n\nThis can't be undone.`);}
 function symLabel(t){if(t.instrument==="option")return `${t.symbol} ${t.expiry||""} ${t.strike??""}${(t.optionType||"")[0]?.toUpperCase()||""}`;return t.symbol;}
 /* ---- days to expiration (from today; null when no expiry) ---- */
 function daysToExp(expiry){if(!expiry)return null;const e=new Date(expiry+"T00:00:00");if(isNaN(e))return null;
@@ -2055,9 +2057,13 @@ function renderTrades(){
   wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);
   fitWideTable("#tradeTable");
   t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
+    const tr=state.trades.find(x=>x.id===b.dataset.del);
+    if(!confirmDelete(tr?`this ${tr.instrument} trade (${(tr.symbol||"?").toUpperCase()})`:"this trade"))return;
     state.trades=state.trades.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadEdit(b.dataset.edit));
   t.querySelectorAll("[data-sdel]").forEach(b=>b.onclick=()=>{
+    const sp=state.spreads.find(x=>x.id===b.dataset.sdel);
+    if(!confirmDelete(sp?`this sell-side trade (${(sp.symbol||"?").toUpperCase()})`:"this sell-side trade"))return;
     state.spreads=state.spreads.filter(x=>x.id!==b.dataset.sdel);save();refreshAll();toast("Sell-side trade deleted");});
   t.querySelectorAll("[data-sedit]").forEach(b=>b.onclick=()=>loadSpreadEdit(b.dataset.sedit));
 }
@@ -2520,7 +2526,7 @@ function renderSpreads(){
           <button class="iconbtn del" data-del="${s.id}">del</button></td>
     </tr>`;}).join("")+`</tbody>`;
   wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp","strike"]);
-  t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{state.spreads=state.spreads.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
+  t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{const sp=state.spreads.find(x=>x.id===b.dataset.del);if(!confirmDelete(sp?`this sell-side trade (${(sp.symbol||"?").toUpperCase()})`:"this sell-side trade"))return;state.spreads=state.spreads.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadSpreadEdit(b.dataset.edit));
 }
 
@@ -2561,7 +2567,7 @@ function renderProp(){
     <td><button class="iconbtn" data-edit="${c.id}">edit</button><button class="iconbtn del" data-del="${c.id}">del</button></td>
   </tr>`).join("")+`</tbody>`;
   wireTable("#propTable",propSort,propFilters,renderProp,["type"]);
-  t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{state.propfirm=state.propfirm.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Entry deleted");});
+  t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{if(!confirmDelete("this prop-firm entry"))return;state.propfirm=state.propfirm.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Entry deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadPfEdit(b.dataset.edit));
 }
 function savePf(){
