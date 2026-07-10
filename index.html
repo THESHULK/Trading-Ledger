@@ -2520,59 +2520,52 @@ function loadSpreadEdit(id){
   switchView("spreads");window.scrollTo({top:0,behavior:"smooth"});
 }
 /* ===================== SELL-SIDE INCOME DASHBOARD ===================== */
-// premium received (short opened + long sold-to-close) and paid (long opened + short bought-to-close)
-function spCashIn(sp){let c=0,q=num(sp.quantity)*100;for(const l of(sp.legs||[])){if(l.side==="short")c+=num(l.open)*q;else if(l.close!=null&&l.close!=="")c+=num(l.close)*q;}return c;}
-function spCashOut(sp){let c=0,q=num(sp.quantity)*100;for(const l of(sp.legs||[])){if(l.side==="long")c+=num(l.open)*q;else if(l.close!=null&&l.close!=="")c+=num(l.close)*q;}return c;}
 function sdFillMonths(keys){keys=keys.filter(Boolean).sort();if(!keys.length)return [];const out=[];let[y,m]=keys[0].split("-").map(Number);const[ey,em]=keys[keys.length-1].split("-").map(Number);
   while(y<ey||(y===ey&&m<=em)){out.push(`${y}-${String(m).padStart(2,"0")}`);if(++m>12){m=1;y++;}if(out.length>36)break;}return out;}
 function sellDashMetrics(sps){
-  const mon=s=>String(s||"").slice(0,7),openDate=sp=>sp.dateOpened||sp.dateClosed||"";
-  const closed=sps.filter(s=>s.status==="closed");
-  let income=0,paid=0,fees=0;const inByMo={},outByMo={},pnlByMo={};
-  for(const sp of sps){const ci=spCashIn(sp),co=spCashOut(sp);income+=ci;paid+=co;fees+=num(sp.fees);
-    const om=mon(openDate(sp));if(om){inByMo[om]=(inByMo[om]||0)+ci;outByMo[om]=(outByMo[om]||0)+co;}}
-  for(const sp of closed){const cm=mon(sp.dateClosed||openDate(sp));if(cm)pnlByMo[cm]=(pnlByMo[cm]||0)+spreadRealized(sp);}
-  const net=income-paid-fees;
-  const months=[...new Set([...Object.keys(inByMo),...Object.keys(pnlByMo)])].sort();
+  const mon=s=>String(s||"").slice(0,7);
+  const closed=sps.filter(s=>s.status==="closed"),openSp=sps.filter(s=>s.status!=="closed");
+  // realized P/L per closed spread — same figure the sell-side table shows
+  let realized=0;const realByMo={},creditByMo={};
+  for(const sp of closed){const r=spreadRealized(sp);realized+=r;const cm=mon(sp.dateClosed||sp.dateOpened);if(cm)realByMo[cm]=(realByMo[cm]||0)+r;}
+  // net credit received at open (the premium-selling "income" stream), bucketed by open month
+  let collected=0;
+  for(const sp of sps){const c=spreadNetOpen(sp)*num(sp.quantity)*100;collected+=c;const om=mon(sp.dateOpened||sp.dateClosed);if(om)creditByMo[om]=(creditByMo[om]||0)+c;}
+  // open (unrealized) premium still working — matches the table's "Unrealized" total
+  let openPrem=0;for(const sp of openSp)openPrem+=spreadNetOpen(sp)*num(sp.quantity)*100-num(sp.fees);
+  const months=[...new Set([...Object.keys(realByMo),...Object.keys(creditByMo)])].sort();
   const monthsCount=Math.max(1,months.length),curMo=today().slice(0,7);
   const wins=closed.filter(s=>spreadRealized(s)>0).length;
   let best=null,worst=null;for(const s of closed){const r=spreadRealized(s);if(best==null||r>best.r)best={r,s};if(worst==null||r<worst.r)worst={r,s};}
   const bySym={};for(const s of sps){const k=(s.symbol||"?").toUpperCase();bySym[k]=(bySym[k]||0)+1;}
   let mostSym="—",mostN=0;for(const k in bySym)if(bySym[k]>mostN){mostN=bySym[k];mostSym=k;}
-  const posBySym={};for(const s of sps.filter(x=>x.status!=="closed")){const k=(s.symbol||"?").toUpperCase();
+  const posBySym={};for(const s of openSp){const k=(s.symbol||"?").toUpperCase();
     const p=posBySym[k]||(posBySym[k]={sym:k,contracts:0,prem:0,count:0,types:{}});
     p.contracts+=num(s.quantity);p.prem+=spreadNetOpen(s)*num(s.quantity)*100;p.count++;p.types[s.type]=(p.types[s.type]||0)+1;}
   const posRows=Object.values(posBySym).sort((a,b)=>b.prem-a.prem);
-  return {income,paid,fees,net,inByMo,outByMo,pnlByMo,monthsCount,curMo,
-    incomeMo:inByMo[curMo]||0,paidMo:outByMo[curMo]||0,pnlMo:pnlByMo[curMo]||0,
-    avgMonthlyPnl:net/monthsCount,avgMonthlyIncome:income/monthsCount,
+  return {realized,collected,openPrem,realByMo,creditByMo,monthsCount,curMo,
+    realizedMo:realByMo[curMo]||0,collectedMo:creditByMo[curMo]||0,
+    avgMonthly:realized/monthsCount,avgCollected:collected/monthsCount,
     tradesAll:sps.length,ccN:sps.filter(s=>s.type==="CC").length,cspN:sps.filter(s=>s.type==="CSP").length,
     winRate:closed.length?Math.round(wins/closed.length*100):0,closedN:closed.length,
-    openCount:sps.filter(s=>s.status!=="closed").length,best,worst,mostSym,mostN,posRows};
+    openCount:openSp.length,best,worst,mostSym,mostN,posRows};
 }
-function sdIncPaidChart(inByMo,outByMo){
-  const months=sdFillMonths([...new Set([...Object.keys(inByMo),...Object.keys(outByMo)])]).slice(-13);
-  const W=560,H=150,pad={l:6,r:6,t:8,b:20},base=H-pad.b,hMax=H-pad.t-pad.b;
-  if(!months.length)return `<svg viewBox="0 0 ${W} ${H}" class="sd-chart"><text x="${W/2}" y="${H/2}" text-anchor="middle" class="sd-axis">no data</text></svg>`;
-  const maxV=Math.max(1,...months.map(m=>Math.max(inByMo[m]||0,outByMo[m]||0)));
-  const bw=(W-pad.l-pad.r)/months.length;let g="";
-  months.forEach((m,i)=>{const inc=inByMo[m]||0,pd=outByMo[m]||0,gw=bw*0.32,gap=bw*0.08;
-    const x0=pad.l+i*bw+bw*0.5-(gw+gap/2),hi=inc/maxV*hMax,hp=pd/maxV*hMax;
-    g+=`<rect x="${x0.toFixed(1)}" y="${(base-hi).toFixed(1)}" width="${gw.toFixed(1)}" height="${Math.max(0,hi).toFixed(1)}" rx="1.5" fill="var(--green)" opacity=".9"/>`;
-    g+=`<rect x="${(x0+gw+gap).toFixed(1)}" y="${(base-hp).toFixed(1)}" width="${gw.toFixed(1)}" height="${Math.max(0,hp).toFixed(1)}" rx="1.5" fill="var(--red)" opacity=".85"/>`;
-    if(months.length<=13){const mm=m.split("-")[1];g+=`<text class="sd-axis" x="${(pad.l+i*bw+bw/2).toFixed(1)}" y="${H-7}" text-anchor="middle">${MON[+mm-1]}</text>`;}});
-  return `<svg viewBox="0 0 ${W} ${H}" class="sd-chart">${g}</svg>`;
-}
-function sdPnlChart(pnlByMo){
-  const months=sdFillMonths(Object.keys(pnlByMo)).slice(-13);
+// monthly bar chart; signed=true draws +/- from a centre line, else all bars up from the baseline
+function sdBarChart(byMo,signed,empty){
+  const months=sdFillMonths(Object.keys(byMo)).slice(-13);
   const W=560,H=150,pad={l:6,r:6,t:10,b:20};
-  if(!months.length)return `<svg viewBox="0 0 ${W} ${H}" class="sd-chart"><text x="${W/2}" y="${H/2}" text-anchor="middle" class="sd-axis">no closed trades</text></svg>`;
-  const maxA=Math.max(1,...months.map(m=>Math.abs(pnlByMo[m]||0)));
-  const zero=pad.t+(H-pad.t-pad.b)/2,half=(H-pad.t-pad.b)/2-4,bw=(W-pad.l-pad.r)/months.length;
-  let g=`<line x1="${pad.l}" y1="${zero}" x2="${W-pad.r}" y2="${zero}" stroke="var(--line2)"/>`;
-  months.forEach((m,i)=>{const v=pnlByMo[m]||0,h=Math.abs(v)/maxA*half,x=pad.l+i*bw+bw*0.2,w=bw*0.6,y=v>=0?zero-h:zero;
-    g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" rx="1.5" fill="${v>=0?'var(--green)':'var(--red)'}" opacity=".9"/>`;
-    if(months.length<=13){const mm=m.split("-")[1];g+=`<text class="sd-axis" x="${(pad.l+i*bw+bw/2).toFixed(1)}" y="${H-7}" text-anchor="middle">${MON[+mm-1]}</text>`;}});
+  if(!months.length)return `<svg viewBox="0 0 ${W} ${H}" class="sd-chart"><text x="${W/2}" y="${H/2}" text-anchor="middle" class="sd-axis">${empty||"no data"}</text></svg>`;
+  const maxA=Math.max(1,...months.map(m=>Math.abs(byMo[m]||0)));
+  const bw=(W-pad.l-pad.r)/months.length;let g="";
+  const lbl=(m,i)=>{if(months.length>13)return "";const mm=m.split("-")[1];return `<text class="sd-axis" x="${(pad.l+i*bw+bw/2).toFixed(1)}" y="${H-7}" text-anchor="middle">${MON[+mm-1]}</text>`;};
+  if(signed){const zero=pad.t+(H-pad.t-pad.b)/2,half=(H-pad.t-pad.b)/2-4;
+    g+=`<line x1="${pad.l}" y1="${zero}" x2="${W-pad.r}" y2="${zero}" stroke="var(--line2)"/>`;
+    months.forEach((m,i)=>{const v=byMo[m]||0,hh=Math.abs(v)/maxA*half,x=pad.l+i*bw+bw*0.2,w=bw*0.6,y=v>=0?zero-hh:zero;
+      g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0,hh).toFixed(1)}" rx="1.5" fill="${v>=0?'var(--green)':'var(--red)'}" opacity=".9"/>`+lbl(m,i);});
+  }else{const base=H-pad.b,hMax=H-pad.t-pad.b;
+    months.forEach((m,i)=>{const v=byMo[m]||0,hh=Math.max(0,v)/maxA*hMax,x=pad.l+i*bw+bw*0.2,w=bw*0.6;
+      g+=`<rect x="${x.toFixed(1)}" y="${(base-hh).toFixed(1)}" width="${w.toFixed(1)}" height="${hh.toFixed(1)}" rx="1.5" fill="var(--green)" opacity=".9"/>`+lbl(m,i);});
+  }
   return `<svg viewBox="0 0 ${W} ${H}" class="sd-chart">${g}</svg>`;
 }
 function moTag(v,invert){const cl=(invert?-v:v)>=0?"pos":"neg";return `<span class="${cl}">${fmtSignedColored(v).replace("−","-")} mo</span>`;}
@@ -2591,25 +2584,25 @@ function renderSellDash(){
   }).join(""):`<div class="prow"><span class="ct">No open sell-side positions.</span></div>`;
   box.innerHTML=`<div class="sd">
     <div class="sd-tiles">
-      <div class="sd-tile"><div class="lbl">Total realized income</div><div class="big">${money(d.income)}</div><div class="mo">${moTag(d.incomeMo)}</div></div>
-      <div class="sd-tile"><div class="lbl">Total premiums paid</div><div class="big">${money(d.paid)}</div><div class="mo"><span class="${d.paidMo>0?'neg':'mut'}">${d.paidMo>0?'-':''}${money(d.paidMo)} mo</span></div></div>
-      <div class="sd-tile"><div class="lbl">Avg monthly P/L</div><div class="big ${cls(d.net)}">${fmtSignedColored(d.avgMonthlyPnl).replace("−","-")}</div><div class="mo">${moTag(d.pnlMo)}</div></div>
+      <div class="sd-tile"><div class="lbl">Realized P/L</div><div class="big ${cls(d.realized)}">${fmtSignedColored(d.realized).replace("−","-")}</div><div class="mo">${moTag(d.realizedMo)}</div></div>
+      <div class="sd-tile"><div class="lbl">Open premium</div><div class="big ${cls(d.openPrem)}">${fmtSignedColored(d.openPrem).replace("−","-")}</div><div class="mo"><span class="mut">${d.openCount} open · unrealized</span></div></div>
+      <div class="sd-tile"><div class="lbl">Avg monthly P/L</div><div class="big ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</div><div class="mo"><span class="mut">over ${d.monthsCount} mo</span></div></div>
     </div>
     <div class="sd-sec"><span class="hash">§ 02</span><b>PERFORMANCE</b></div>
     <div class="sd-charts">
-      <div class="sd-box"><div class="bh"><span>Income / premiums_paid</span></div>
-        <div class="bv"><span class="l">${money(d.avgMonthlyIncome)}</span><span class="r">${money(d.paid/d.monthsCount)}</span></div>
-        <div class="bsub"><span>income avg/mo</span><span>paid avg/mo</span></div>
-        ${sdIncPaidChart(d.inByMo,d.outByMo)}</div>
-      <div class="sd-box"><div class="bh"><span>Monthly_PNL</span><span>${d.closedN}/${d.monthsCount}M</span></div>
-        <div class="bv"><span class="l ${cls(d.avgMonthlyPnl)}">${fmtSignedColored(d.avgMonthlyPnl).replace("−","-")}</span></div>
+      <div class="sd-box"><div class="bh"><span>Credit_collected / mo</span></div>
+        <div class="bv"><span class="l">${money(d.avgCollected)}</span></div>
+        <div class="bsub"><span>net credit received avg/mo</span></div>
+        ${sdBarChart(d.creditByMo,false,"no trades yet")}</div>
+      <div class="sd-box"><div class="bh"><span>Realized_P/L / mo</span><span>${d.closedN}/${d.monthsCount}M</span></div>
+        <div class="bv"><span class="l ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</span></div>
         <div class="bsub"><span>avg/mo</span></div>
-        ${sdPnlChart(d.pnlByMo)}</div>
+        ${sdBarChart(d.realByMo,true,"no closed trades")}</div>
     </div>
     <div class="sd-sec"><span class="hash">§ 03</span><b>PORTFOLIO_INSIGHTS</b></div>
     <div class="sd-insights">
       <div class="sd-cell"><div class="lbl">Trades_all_time</div><div class="big">${d.tradesAll}</div><div class="sub">${d.ccN} CC / ${d.cspN} CSP</div></div>
-      <div class="sd-cell"><div class="lbl">Avg_monthly_income</div><div class="big">${money(d.avgMonthlyIncome)}</div><div class="sub">premium / month</div></div>
+      <div class="sd-cell"><div class="lbl">Avg_monthly_P/L</div><div class="big ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</div><div class="sub">realized / month</div></div>
       <div class="sd-cell"><div class="lbl">Win_rate</div><div class="big">${d.winRate}%</div><div class="sub">${d.closedN} closed trades</div></div>
       <div class="sd-cell"><div class="lbl">Open_positions</div><div class="big">${d.openCount}</div><div class="sub">currently open</div></div>
       <div class="sd-cell"><div class="lbl">Best_trade / worst_trade</div><div class="big">${d.best?fmtSignedColored(d.best.r).replace("−","-"):"—"} / ${d.worst?fmtSignedColored(d.worst.r).replace("−","-"):"—"}</div><div class="sub">${d.best?(d.best.s.symbol||"?").toUpperCase():"—"} / ${d.worst?(d.worst.s.symbol||"?").toUpperCase():"—"}</div></div>
