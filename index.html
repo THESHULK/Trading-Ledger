@@ -2576,7 +2576,7 @@ function renderSellDash(){
   const d=sellDashMetrics(sps);
   const money=v=>fmtMoney(v).replace("−","-");
   const typeName=t=>((SPREAD_TYPES[t]&&SPREAD_TYPES[t].name)||t||"").toUpperCase().replace(/ /g,"_");
-  const posHtml=d.posRows.length?d.posRows.slice(0,8).map(p=>{
+  const posHtml=d.posRows.length?d.posRows.map(p=>{
     const domType=Object.keys(p.types).sort((a,b)=>p.types[b]-p.types[a])[0];
     const right=p.count>1?`${p.count} positions`:typeName(domType);
     return `<div class="prow"><span class="sym">${p.sym}</span><span class="ct">${fmtNum(p.contracts)} contracts</span>`+
