@@ -2535,9 +2535,12 @@ function sellDashMetrics(sps){
   // realized P/L per closed spread — same figure the sell-side table shows
   let realized=0;const realByMo={},creditByMo={};
   for(const sp of closed){const r=spreadRealized(sp);realized+=r;const cm=mon(sp.dateClosed||sp.dateOpened);if(cm)realByMo[cm]=(realByMo[cm]||0)+r;}
-  // net credit received at open (the premium-selling "income" stream), bucketed by open month
+  // net credit per month = credit received when opening (+), plus losses from closing (−, the cost paid to
+  // buy positions back), each bucketed by its own transaction month
   let collected=0;
-  for(const sp of sps){const c=spreadNetOpen(sp)*num(sp.quantity)*100;collected+=c;const om=mon(sp.dateOpened||sp.dateClosed);if(om)creditByMo[om]=(creditByMo[om]||0)+c;}
+  for(const sp of sps){const q=num(sp.quantity)*100;
+    const om=mon(sp.dateOpened||sp.dateClosed);if(om){const c=spreadNetOpen(sp)*q;creditByMo[om]=(creditByMo[om]||0)+c;collected+=c;}
+    if(sp.status==="closed"){const cm=mon(sp.dateClosed||sp.dateOpened);if(cm){const c=-spreadNetClose(sp)*q;creditByMo[cm]=(creditByMo[cm]||0)+c;collected+=c;}}}
   // open (unrealized) premium still working — matches the table's "Unrealized" total
   let openPrem=0;for(const sp of openSp)openPrem+=spreadNetOpen(sp)*num(sp.quantity)*100-num(sp.fees);
   const months=[...new Set([...Object.keys(realByMo),...Object.keys(creditByMo)])].sort();
@@ -2615,7 +2618,7 @@ function renderSellDash(){
     <div class="sd-charts">
       <div class="sd-box"><div class="bh"><span>Net credit collected / mo</span></div>
         <div class="bv"><span class="l">${money(d.avgCollected)}</span></div>
-        <div class="bsub"><span>net credit collected avg/mo</span></div>
+        <div class="bsub"><span>credit received − closing costs · avg/mo</span></div>
         ${sdBarChart(d.creditByMo,"no trades yet")}</div>
       <div class="sd-box"><div class="bh"><span>Realized P/L / mo</span><span>${d.closedN}/${d.monthsCount}M</span></div>
         <div class="bv"><span class="l ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</span></div>
