@@ -172,6 +172,9 @@ svg.chart{width:100%;display:block;overflow:visible}
 .statgrid .st{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 .statgrid .st .k{color:var(--faint);font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase}
 .statgrid .st .v{font-family:var(--mono);font-size:14px;font-weight:700;margin-top:2px}
+.ticker-lookup{float:right;background:var(--bg2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-family:var(--mono);font-size:11px;width:150px;max-width:45%;text-transform:uppercase}
+.ticker-lookup:focus{border-color:var(--green-dim);outline:none}
+.ticker-lookup::placeholder{color:var(--faint);text-transform:none}
 /* ---- sell-side income dashboard ---- */
 .sd{font-family:var(--mono);margin-bottom:18px;position:relative}
 .sd .sd-sec{color:var(--muted);font-size:11px;letter-spacing:.08em;margin:20px 2px 10px;font-weight:600}
@@ -458,7 +461,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     </div>
 
     <div class="panel">
-      <h3>P&amp;L by Ticker <span class="hint" id="tickerHint">realized + open</span></h3>
+      <h3>P&amp;L by Ticker <span class="hint" id="tickerHint">realized + open</span><input type="text" id="tickerLookup" class="ticker-lookup" placeholder="look up ticker…" autocomplete="off"></h3>
       <div class="chartwrap"><svg class="chart" id="barChart" viewBox="0 0 720 280"></svg>
         <div class="tip" id="barTip"></div></div>
       <div class="legend">
@@ -1334,6 +1337,7 @@ function drawInstrument(realized,pos){
 }
 
 /* ---- by ticker ---- */
+let tickerQ="";
 function drawByTicker(realized,pos){
   const svg=$("#barChart");const W=720,H=280,pad={l:70,r:20,t:10,b:24};
   const map={};
@@ -1341,8 +1345,11 @@ function drawByTicker(realized,pos){
   for(const p of pos){if(p.unrealized!=null)map[p.symbol]=(map[p.symbol]||0)+p.unrealized;}
   let rows=Object.keys(map).map(s=>({s,v:map[s]}));
   rows.sort((a,b)=>b.v-a.v);
-  rows=rows.slice(0,12);
-  if(rows.length===0){svg.innerHTML=`<text x="${W/2}" y="${H/2}" text-anchor="middle" class="axislbl" style="font-size:13px">no data in range</text>`;return;}
+  const q=(typeof tickerQ==="string"?tickerQ:"").trim().toUpperCase();
+  if(q)rows=rows.filter(r=>r.s.toUpperCase().includes(q));
+  rows=rows.slice(0,q?20:12);
+  const hintEl=$("#tickerHint");if(hintEl)hintEl.textContent=q?(rows.length+" match"+(rows.length===1?"":"es")):"realized + open";
+  if(rows.length===0){svg.innerHTML=`<text x="${W/2}" y="${H/2}" text-anchor="middle" class="axislbl" style="font-size:13px">${q?"no ticker matches “"+q+"”":"no data in range"}</text>`;return;}
   const maxA=Math.max(1,...rows.map(r=>Math.abs(r.v)));
   const innerW=W-pad.l-pad.r;const zero=pad.l+innerW*(maxA/(2*maxA)); // center
   const bh=Math.min(28,(H-pad.t-pad.b)/rows.length-6);
@@ -2551,10 +2558,11 @@ function sellDashMetrics(sps){
     openCount:openSp.length,best,worst,mostSym,mostN,posRows};
 }
 // monthly bar chart; signed=true draws +/- from a centre line, else all bars up from the baseline
-function sdBarChart(byMo,signed,empty){
+function sdBarChart(byMo,empty){
   const months=sdFillMonths(Object.keys(byMo)).slice(-13);
   const W=560,H=150,pad={l:6,r:6,t:10,b:20};
   if(!months.length)return `<svg viewBox="0 0 ${W} ${H}" class="sd-chart"><text x="${W/2}" y="${H/2}" text-anchor="middle" class="sd-axis">${empty||"no data"}</text></svg>`;
+  const signed=months.some(m=>(byMo[m]||0)<0); // centre the axis only when some months are negative
   const maxA=Math.max(1,...months.map(m=>Math.abs(byMo[m]||0)));
   const bw=(W-pad.l-pad.r)/months.length;let g="";
   const lbl=(m,i)=>{if(months.length>13)return "";const mm=m.split("-")[1];return `<text class="sd-axis" x="${(pad.l+i*bw+bw/2).toFixed(1)}" y="${H-7}" text-anchor="middle">${MON[+mm-1]}</text>`;};
@@ -2605,14 +2613,14 @@ function renderSellDash(){
     </div>
     <div class="sd-sec"><span class="hash">§ 02</span><b>PERFORMANCE</b></div>
     <div class="sd-charts">
-      <div class="sd-box"><div class="bh"><span>Credit collected / mo</span></div>
+      <div class="sd-box"><div class="bh"><span>Net credit collected / mo</span></div>
         <div class="bv"><span class="l">${money(d.avgCollected)}</span></div>
-        <div class="bsub"><span>net credit received avg/mo</span></div>
-        ${sdBarChart(d.creditByMo,false,"no trades yet")}</div>
+        <div class="bsub"><span>net credit collected avg/mo</span></div>
+        ${sdBarChart(d.creditByMo,"no trades yet")}</div>
       <div class="sd-box"><div class="bh"><span>Realized P/L / mo</span><span>${d.closedN}/${d.monthsCount}M</span></div>
         <div class="bv"><span class="l ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</span></div>
         <div class="bsub"><span>avg/mo</span></div>
-        ${sdBarChart(d.realByMo,true,"no closed trades")}</div>
+        ${sdBarChart(d.realByMo,"no closed trades")}</div>
     </div>
     <div class="sd-sec"><span class="hash">§ 03</span><b>PORTFOLIO INSIGHTS</b></div>
     <div class="sd-insights">
@@ -2794,6 +2802,7 @@ function init(){
   window.addEventListener("dragover",e=>{if(hasFiles(e))e.preventDefault();});
   window.addEventListener("drop",e=>{if(hasFiles(e)&&!(e.target.closest&&e.target.closest(".dropzone")))e.preventDefault();});
   $("#hideSellSide").onchange=e=>{hideSellSide=e.target.checked;renderTrades();};
+  $("#tickerLookup").oninput=e=>{tickerQ=e.target.value;if(dashData)drawByTicker(dashData.allRealized,dashData.allPos);};
   populateSpreadTypes();resetSpreadForm();
   $("#sp-type").onchange=renderLegInputs;
   ["#sp-sym","#sp-qty","#sp-exp","#sp-open","#sp-close","#sp-fees"].forEach(id=>{const el=$(id);if(el){el.oninput=updateSpreadCalc;el.onchange=updateSpreadCalc;}});
