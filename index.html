@@ -173,7 +173,7 @@ svg.chart{width:100%;display:block;overflow:visible}
 .statgrid .st .k{color:var(--faint);font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase}
 .statgrid .st .v{font-family:var(--mono);font-size:14px;font-weight:700;margin-top:2px}
 /* ---- sell-side income dashboard ---- */
-.sd{font-family:var(--mono)}
+.sd{font-family:var(--mono);margin-bottom:18px;position:relative}
 .sd .sd-sec{color:var(--muted);font-size:11px;letter-spacing:.08em;margin:20px 2px 10px;font-weight:600}
 .sd .sd-sec b{color:var(--txt)}
 .sd .sd-sec .hash{color:var(--faint);margin-right:8px}
@@ -193,7 +193,7 @@ svg.chart{width:100%;display:block;overflow:visible}
 .sd-box .bsub{display:flex;justify-content:space-between;color:var(--faint);font-size:10px;margin-top:2px}
 .sd-chart{width:100%;height:150px;display:block;margin-top:8px;overflow:visible}
 .sd-chart .sd-axis{fill:var(--faint);font-family:var(--mono);font-size:8.5px}
-.sd-insights{border:1px solid var(--line);border-radius:12px;overflow:hidden;display:grid;grid-template-columns:1fr 1fr}
+.sd-insights{border:1px solid var(--line);border-radius:12px;overflow:hidden;display:grid;grid-template-columns:1fr 1fr;background:var(--panel)}
 @media(max-width:560px){.sd-insights{grid-template-columns:1fr}}
 .sd-cell{padding:13px 16px;border-right:1px solid var(--line);border-top:1px solid var(--line)}
 .sd-cell:nth-child(-n+2){border-top:0}
@@ -2558,15 +2558,29 @@ function sdBarChart(byMo,signed,empty){
   const maxA=Math.max(1,...months.map(m=>Math.abs(byMo[m]||0)));
   const bw=(W-pad.l-pad.r)/months.length;let g="";
   const lbl=(m,i)=>{if(months.length>13)return "";const mm=m.split("-")[1];return `<text class="sd-axis" x="${(pad.l+i*bw+bw/2).toFixed(1)}" y="${H-7}" text-anchor="middle">${MON[+mm-1]}</text>`;};
+  const hit=(m,i)=>`<rect class="sdbar" x="${(pad.l+i*bw).toFixed(1)}" y="${pad.t}" width="${bw.toFixed(1)}" height="${(H-pad.t-pad.b).toFixed(1)}" fill="transparent" data-m="${m}" data-v="${byMo[m]||0}" style="cursor:pointer"/>`;
   if(signed){const zero=pad.t+(H-pad.t-pad.b)/2,half=(H-pad.t-pad.b)/2-4;
     g+=`<line x1="${pad.l}" y1="${zero}" x2="${W-pad.r}" y2="${zero}" stroke="var(--line2)"/>`;
     months.forEach((m,i)=>{const v=byMo[m]||0,hh=Math.abs(v)/maxA*half,x=pad.l+i*bw+bw*0.2,w=bw*0.6,y=v>=0?zero-hh:zero;
-      g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0,hh).toFixed(1)}" rx="1.5" fill="${v>=0?'var(--green)':'var(--red)'}" opacity=".9"/>`+lbl(m,i);});
+      g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0,hh).toFixed(1)}" rx="1.5" fill="${v>=0?'var(--green)':'var(--red)'}" opacity=".9" style="pointer-events:none"/>`+lbl(m,i)+hit(m,i);});
   }else{const base=H-pad.b,hMax=H-pad.t-pad.b;
     months.forEach((m,i)=>{const v=byMo[m]||0,hh=Math.max(0,v)/maxA*hMax,x=pad.l+i*bw+bw*0.2,w=bw*0.6;
-      g+=`<rect x="${x.toFixed(1)}" y="${(base-hh).toFixed(1)}" width="${w.toFixed(1)}" height="${hh.toFixed(1)}" rx="1.5" fill="var(--green)" opacity=".9"/>`+lbl(m,i);});
+      g+=`<rect x="${x.toFixed(1)}" y="${(base-hh).toFixed(1)}" width="${w.toFixed(1)}" height="${hh.toFixed(1)}" rx="1.5" fill="var(--green)" opacity=".9" style="pointer-events:none"/>`+lbl(m,i)+hit(m,i);});
   }
   return `<svg viewBox="0 0 ${W} ${H}" class="sd-chart">${g}</svg>`;
+}
+// wire hover/touch tooltips for the sell-side chart bars
+function sdWireCharts(){
+  const sd=$("#sellDash .sd");if(!sd)return;const tip=$("#sdTip");if(!tip)return;
+  sd.querySelectorAll(".sdbar").forEach(b=>{
+    const show=(cx,cy)=>{const r=sd.getBoundingClientRect(),[y,mm]=b.dataset.m.split("-");
+      tip.innerHTML=`${MON[+mm-1]} ${y}<br><b>${fmtSignedColored(+b.dataset.v).replace("−","-")}</b>`;
+      const sx=cx-r.left,sy=cy-r.top;
+      tip.style.left=Math.max(2,Math.min(sx-46,r.width-104))+"px";tip.style.top=Math.max(2,sy-48)+"px";tip.style.opacity=1;};
+    b.addEventListener("mousemove",e=>show(e.clientX,e.clientY));
+    b.addEventListener("mouseleave",()=>tip.style.opacity=0);
+    b.addEventListener("touchstart",e=>{const t=e.touches[0];show(t.clientX,t.clientY);clearTimeout(tip._t);tip._t=setTimeout(()=>tip.style.opacity=0,2400);e.preventDefault();},{passive:false});
+  });
 }
 function moTag(v,invert){const cl=(invert?-v:v)>=0?"pos":"neg";return `<span class="${cl}">${fmtSignedColored(v).replace("−","-")} mo</span>`;}
 function renderSellDash(){
@@ -2575,7 +2589,7 @@ function renderSellDash(){
   if(!sps.length){box.innerHTML="";return;}
   const d=sellDashMetrics(sps);
   const money=v=>fmtMoney(v).replace("−","-");
-  const typeName=t=>((SPREAD_TYPES[t]&&SPREAD_TYPES[t].name)||t||"").toUpperCase().replace(/ /g,"_");
+  const typeName=t=>((SPREAD_TYPES[t]&&SPREAD_TYPES[t].name)||t||"").toUpperCase();
   const posHtml=d.posRows.length?d.posRows.map(p=>{
     const domType=Object.keys(p.types).sort((a,b)=>p.types[b]-p.types[a])[0];
     const right=p.count>1?`${p.count} positions`:typeName(domType);
@@ -2583,6 +2597,7 @@ function renderSellDash(){
       `<span class="pm">total premiums: ${money(p.prem)}</span><span class="rt">${right}</span></div>`;
   }).join(""):`<div class="prow"><span class="ct">No open sell-side positions.</span></div>`;
   box.innerHTML=`<div class="sd">
+    <div class="tip" id="sdTip"></div>
     <div class="sd-tiles">
       <div class="sd-tile"><div class="lbl">Realized P/L</div><div class="big ${cls(d.realized)}">${fmtSignedColored(d.realized).replace("−","-")}</div><div class="mo">${moTag(d.realizedMo)}</div></div>
       <div class="sd-tile"><div class="lbl">Open premium</div><div class="big ${cls(d.openPrem)}">${fmtSignedColored(d.openPrem).replace("−","-")}</div><div class="mo"><span class="mut">${d.openCount} open · unrealized</span></div></div>
@@ -2590,27 +2605,28 @@ function renderSellDash(){
     </div>
     <div class="sd-sec"><span class="hash">§ 02</span><b>PERFORMANCE</b></div>
     <div class="sd-charts">
-      <div class="sd-box"><div class="bh"><span>Credit_collected / mo</span></div>
+      <div class="sd-box"><div class="bh"><span>Credit collected / mo</span></div>
         <div class="bv"><span class="l">${money(d.avgCollected)}</span></div>
         <div class="bsub"><span>net credit received avg/mo</span></div>
         ${sdBarChart(d.creditByMo,false,"no trades yet")}</div>
-      <div class="sd-box"><div class="bh"><span>Realized_P/L / mo</span><span>${d.closedN}/${d.monthsCount}M</span></div>
+      <div class="sd-box"><div class="bh"><span>Realized P/L / mo</span><span>${d.closedN}/${d.monthsCount}M</span></div>
         <div class="bv"><span class="l ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</span></div>
         <div class="bsub"><span>avg/mo</span></div>
         ${sdBarChart(d.realByMo,true,"no closed trades")}</div>
     </div>
-    <div class="sd-sec"><span class="hash">§ 03</span><b>PORTFOLIO_INSIGHTS</b></div>
+    <div class="sd-sec"><span class="hash">§ 03</span><b>PORTFOLIO INSIGHTS</b></div>
     <div class="sd-insights">
-      <div class="sd-cell"><div class="lbl">Trades_all_time</div><div class="big">${d.tradesAll}</div><div class="sub">${d.ccN} CC / ${d.cspN} CSP</div></div>
-      <div class="sd-cell"><div class="lbl">Avg_monthly_P/L</div><div class="big ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</div><div class="sub">realized / month</div></div>
-      <div class="sd-cell"><div class="lbl">Win_rate</div><div class="big">${d.winRate}%</div><div class="sub">${d.closedN} closed trades</div></div>
-      <div class="sd-cell"><div class="lbl">Open_positions</div><div class="big">${d.openCount}</div><div class="sub">currently open</div></div>
-      <div class="sd-cell"><div class="lbl">Best_trade / worst_trade</div><div class="big">${d.best?fmtSignedColored(d.best.r).replace("−","-"):"—"} / ${d.worst?fmtSignedColored(d.worst.r).replace("−","-"):"—"}</div><div class="sub">${d.best?(d.best.s.symbol||"?").toUpperCase():"—"} / ${d.worst?(d.worst.s.symbol||"?").toUpperCase():"—"}</div></div>
-      <div class="sd-cell"><div class="lbl">Most_traded</div><div class="big">${d.mostSym}</div><div class="sub">${d.mostN} positions</div></div>
+      <div class="sd-cell"><div class="lbl">Trades all-time</div><div class="big">${d.tradesAll}</div><div class="sub">${d.ccN} CC / ${d.cspN} CSP</div></div>
+      <div class="sd-cell"><div class="lbl">Avg monthly P/L</div><div class="big ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</div><div class="sub">realized / month</div></div>
+      <div class="sd-cell"><div class="lbl">Win rate</div><div class="big">${d.winRate}%</div><div class="sub">${d.closedN} closed trades</div></div>
+      <div class="sd-cell"><div class="lbl">Open positions</div><div class="big">${d.openCount}</div><div class="sub">currently open</div></div>
+      <div class="sd-cell"><div class="lbl">Best / worst trade</div><div class="big">${d.best?fmtSignedColored(d.best.r).replace("−","-"):"—"} / ${d.worst?fmtSignedColored(d.worst.r).replace("−","-"):"—"}</div><div class="sub">${d.best?(d.best.s.symbol||"?").toUpperCase():"—"} / ${d.worst?(d.worst.s.symbol||"?").toUpperCase():"—"}</div></div>
+      <div class="sd-cell"><div class="lbl">Most traded</div><div class="big">${d.mostSym}</div><div class="sub">${d.mostN} positions</div></div>
     </div>
-    <div class="sd-sec"><span class="hash">§ 04</span><b>ACTIVE_POSITIONS</b></div>
+    <div class="sd-sec"><span class="hash">§ 04</span><b>ACTIVE POSITIONS</b></div>
     <div class="sd-pos">${posHtml}</div>
   </div>`;
+  sdWireCharts();
 }
 function renderSpreads(){
   renderSellDash();
