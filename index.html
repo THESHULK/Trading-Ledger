@@ -249,6 +249,10 @@ svg.chart{width:100%;display:block;overflow:visible}
 .tip{position:absolute;pointer-events:none;background:#04060a;border:1px solid var(--line2);
   border-radius:7px;padding:7px 10px;font-family:var(--mono);font-size:11px;
   opacity:0;transition:opacity .1s;white-space:nowrap;z-index:5;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+#barTip .tbhead{font-weight:700;margin-bottom:3px;padding-bottom:3px;border-bottom:1px solid var(--line);min-width:120px}
+#barTip .tbrk{display:flex;justify-content:space-between;gap:18px;font-size:10.5px;line-height:1.55;min-width:120px}
+#barTip .tbrk>span{color:var(--muted)}
+#barTip .tbun{margin-top:3px;padding-top:3px;border-top:1px solid var(--line)}
 
 /* ---- tables ---- */
 /* horizontal scroll with a visible cue: edge shadows (Lea Verou technique) + a styled scrollbar,
@@ -1340,9 +1344,10 @@ function drawInstrument(realized,pos){
 let tickerQ="";
 function drawByTicker(realized,pos){
   const svg=$("#barChart");const W=720,H=280,pad={l:70,r:20,t:10,b:24};
-  const map={};
-  for(const r of realized){map[r.symbol]=(map[r.symbol]||0)+r.pnl;}
-  for(const p of pos){if(p.unrealized!=null)map[p.symbol]=(map[p.symbol]||0)+p.unrealized;}
+  const map={},detail={};
+  const addD=(sym,inst,val,unreal)=>{const d=detail[sym]||(detail[sym]={inst:{},unreal:0});d.inst[inst]=(d.inst[inst]||0)+val;if(unreal)d.unreal+=val;};
+  for(const r of realized){map[r.symbol]=(map[r.symbol]||0)+r.pnl;addD(r.symbol,r.instrument,r.pnl,false);}
+  for(const p of pos){if(p.unrealized!=null){map[p.symbol]=(map[p.symbol]||0)+p.unrealized;addD(p.symbol,p.instrument,p.unrealized,true);}}
   let rows=Object.keys(map).map(s=>({s,v:map[s]}));
   rows.sort((a,b)=>b.v-a.v);
   const q=(typeof tickerQ==="string"?tickerQ:"").trim().toUpperCase();
@@ -1366,10 +1371,16 @@ function drawByTicker(realized,pos){
   });
   svg.innerHTML=g;
   const tip=$("#barTip");
+  const instLbl={stock:"Stock",option:"Options",future:"Futures",spread:"Sell-side"};
   const showBar=(b)=>{const r=svg.getBoundingClientRect();
     const bx=+b.getAttribute("x")+(+b.getAttribute("width"))/2;const by=+b.getAttribute("y");
-    tip.innerHTML=`${b.dataset.s}<br><b class="${cls(+b.dataset.v)}">${fmtSignedColored(+b.dataset.v).replace("−","-")}</b>`;
-    tip.style.left=Math.min(bx/W*r.width,r.width-90)+"px";tip.style.top=(by/H*r.height-44)+"px";tip.style.opacity=1;};
+    const sym=b.dataset.s,tot=+b.dataset.v,d=detail[sym]||{inst:{},unreal:0};
+    let brk="";for(const k of ["stock","option","future","spread"]){const v=d.inst[k];
+      if(v!=null&&Math.abs(v)>=0.005)brk+=`<div class="tbrk"><span>${instLbl[k]}</span><b class="${cls(v)}">${fmtSignedColored(v).replace("−","-")}</b></div>`;}
+    let html=`<div class="tbhead">${sym} <b class="${cls(tot)}">${fmtSignedColored(tot).replace("−","-")}</b></div>${brk}`;
+    if(Math.abs(d.unreal)>=0.005)html+=`<div class="tbrk tbun"><span>unrealized</span><b class="${cls(d.unreal)}">${fmtSignedColored(d.unreal).replace("−","-")}</b></div>`;
+    tip.innerHTML=html;
+    tip.style.left=Math.min(bx/W*r.width,r.width-134)+"px";tip.style.top=Math.max(2,by/H*r.height-18)+"px";tip.style.opacity=1;};
   svg.querySelectorAll(".bbar").forEach(b=>{
     b.addEventListener("mouseenter",()=>showBar(b));
     b.addEventListener("mouseleave",()=>tip.style.opacity=0);
