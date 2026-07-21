@@ -249,10 +249,13 @@ svg.chart{width:100%;display:block;overflow:visible}
 .tip{position:absolute;pointer-events:none;background:#04060a;border:1px solid var(--line2);
   border-radius:7px;padding:7px 10px;font-family:var(--mono);font-size:11px;
   opacity:0;transition:opacity .1s;white-space:nowrap;z-index:5;box-shadow:0 6px 20px rgba(0,0,0,.5)}
-#barTip .tbhead{font-weight:700;margin-bottom:3px;padding-bottom:3px;border-bottom:1px solid var(--line);min-width:120px}
-#barTip .tbrk{display:flex;justify-content:space-between;gap:18px;font-size:10.5px;line-height:1.55;min-width:120px}
-#barTip .tbrk>span{color:var(--muted)}
-#barTip .tbun{margin-top:3px;padding-top:3px;border-top:1px solid var(--line)}
+#barTip{white-space:normal}
+#barTip .tbhead{display:flex;justify-content:space-between;gap:20px;font-weight:700;font-size:12.5px;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--line);min-width:158px}
+#barTip .tbsec{display:flex;justify-content:space-between;gap:18px;font-size:11px;font-weight:600;margin-top:6px}
+#barTip .tbsec>span{color:var(--txt)}
+#barTip .tbline{display:flex;justify-content:space-between;gap:18px;font-size:10.5px;line-height:1.5;padding-left:11px}
+#barTip .tbline>span{color:var(--muted)}
+#barTip .tbhint{color:var(--faint);font-size:9px;margin-top:7px;text-align:center;letter-spacing:.03em}
 
 /* ---- tables ---- */
 /* horizontal scroll with a visible cue: edge shadows (Lea Verou technique) + a styled scrollbar,
@@ -1345,7 +1348,8 @@ let tickerQ="";
 function drawByTicker(realized,pos){
   const svg=$("#barChart");const W=720,H=280,pad={l:70,r:20,t:10,b:24};
   const map={},detail={};
-  const addD=(sym,inst,val,unreal)=>{const d=detail[sym]||(detail[sym]={inst:{},unreal:0,real:0});d.inst[inst]=(d.inst[inst]||0)+val;if(unreal)d.unreal+=val;else d.real+=val;};
+  const addD=(sym,inst,val,unreal)=>{const d=detail[sym]||(detail[sym]={realInst:{},unrealInst:{},real:0,unreal:0});
+    if(unreal){d.unrealInst[inst]=(d.unrealInst[inst]||0)+val;d.unreal+=val;}else{d.realInst[inst]=(d.realInst[inst]||0)+val;d.real+=val;}};
   for(const r of realized){map[r.symbol]=(map[r.symbol]||0)+r.pnl;addD(r.symbol,r.instrument,r.pnl,false);}
   for(const p of pos){if(p.unrealized!=null){map[p.symbol]=(map[p.symbol]||0)+p.unrealized;addD(p.symbol,p.instrument,p.unrealized,true);}}
   let rows=Object.keys(map).map(s=>({s,v:map[s]}));
@@ -1371,23 +1375,31 @@ function drawByTicker(realized,pos){
   });
   svg.innerHTML=g;
   const tip=$("#barTip");
+  const money=v=>fmtSignedColored(v).replace("−","-");
   const instLbl={stock:"Stock",option:"Options",future:"Futures",spread:"Sell-side"};
+  // a section (Realized / Unrealized) with its subtotal and per-instrument sub-lines
+  const section=(label,total,byInst)=>{
+    const keys=["stock","option","future","spread"].filter(k=>byInst[k]!=null&&Math.abs(byInst[k])>=0.005);
+    if(!keys.length&&Math.abs(total)<0.005)return "";
+    let s=`<div class="tbsec"><span>${label}</span><b class="${cls(total)}">${money(total)}</b></div>`;
+    for(const k of keys)s+=`<div class="tbline"><span>${instLbl[k]}</span><b class="${cls(byInst[k])}">${money(byInst[k])}</b></div>`;
+    return s;
+  };
   const showBar=(b)=>{const r=svg.getBoundingClientRect();
     const bx=+b.getAttribute("x")+(+b.getAttribute("width"))/2;const by=+b.getAttribute("y");
-    const sym=b.dataset.s,tot=+b.dataset.v,d=detail[sym]||{inst:{},unreal:0};
-    let brk="";for(const k of ["stock","option","future","spread"]){const v=d.inst[k];
-      if(v!=null&&Math.abs(v)>=0.005)brk+=`<div class="tbrk"><span>${instLbl[k]}</span><b class="${cls(v)}">${fmtSignedColored(v).replace("−","-")}</b></div>`;}
-    let ru="";
-    if(Math.abs(d.real)>=0.005)ru+=`<div class="tbrk"><span>realized</span><b class="${cls(d.real)}">${fmtSignedColored(d.real).replace("−","-")}</b></div>`;
-    if(Math.abs(d.unreal)>=0.005)ru+=`<div class="tbrk"><span>unrealized</span><b class="${cls(d.unreal)}">${fmtSignedColored(d.unreal).replace("−","-")}</b></div>`;
-    let html=`<div class="tbhead">${sym} <b class="${cls(tot)}">${fmtSignedColored(tot).replace("−","-")}</b></div>${brk}${ru?`<div class="tbun">${ru}</div>`:""}`;
-    tip.innerHTML=html;
-    tip.style.left=Math.min(bx/W*r.width,r.width-134)+"px";tip.style.top=Math.max(2,by/H*r.height-18)+"px";tip.style.opacity=1;};
+    const sym=b.dataset.s,tot=+b.dataset.v,d=detail[sym]||{realInst:{},unrealInst:{},real:0,unreal:0};
+    tip.innerHTML=`<div class="tbhead">${sym}<b class="${cls(tot)}">${money(tot)}</b></div>`+
+      section("Realized",d.real,d.realInst)+section("Unrealized (open)",d.unreal,d.unrealInst)+
+      `<div class="tbhint">tap elsewhere to close</div>`;
+    tip.style.left=Math.min(bx/W*r.width,r.width-150)+"px";tip.style.top=Math.max(2,by/H*r.height-18)+"px";tip.style.opacity=1;tip._pin=true;};
   svg.querySelectorAll(".bbar").forEach(b=>{
-    b.addEventListener("mouseenter",()=>showBar(b));
-    b.addEventListener("mouseleave",()=>tip.style.opacity=0);
-    b.addEventListener("touchstart",ev=>{showBar(b);clearTimeout(tip._t);tip._t=setTimeout(()=>tip.style.opacity=0,6000);ev.preventDefault();},{passive:false});
+    b.addEventListener("mouseenter",()=>showBar(b));   // hover updates; it then stays put (no mouseleave hide)
+    b.addEventListener("click",ev=>{showBar(b);ev.stopPropagation();});
+    b.addEventListener("touchstart",ev=>{showBar(b);ev.stopPropagation();ev.preventDefault();},{passive:false});
   });
+  // dismiss the pinned tooltip when tapping/clicking anywhere else (wired once)
+  if(!tip._dismiss){tip._dismiss=e=>{if(tip._pin&&!(e.target&&e.target.closest&&e.target.closest(".bbar"))){tip.style.opacity=0;tip._pin=false;}};
+    document.addEventListener("click",tip._dismiss);document.addEventListener("touchstart",tip._dismiss,{passive:true});}
 }
 
 const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
