@@ -2354,7 +2354,7 @@ async function importSpreadShot(file){
     const d=await aiVisionExtract(dataUrl,SHOT_SPREAD_PROMPT);
     prefillSpreadFromShot(d);
     st.innerHTML=`<span class="pos">✓ Filled from screenshot — check the legs, then Save.</span>`;
-    window.scrollTo({top:0,behavior:"smooth"});$("#sp-sym").focus();
+    scrollToForm("#spreadFormTitle");$("#sp-sym").focus();
   }catch(err){st.textContent="";toast("Screenshot import failed: "+(err&&err.msg?err.msg:err),true);}
   finally{dz&&dz.classList.remove("busy");}
 }
@@ -2540,6 +2540,10 @@ function resetSpreadForm(){
   $("#spreadFormTitle").textContent="Add Sell-Side Trade";$("#saveSpread").textContent="Add Trade";
   $("#cancelSpread").style.display="none";renderLegInputs();
 }
+// scroll a form panel into view just below the sticky header (not the page top, which now sits above the dashboard)
+function scrollToForm(anchorSel){const el=$(anchorSel);if(!el)return;const p=el.closest(".panel")||el;
+  const off=((($("header")||{}).offsetHeight)||56)+12;
+  window.scrollTo({top:Math.max(0,p.getBoundingClientRect().top+window.scrollY-off),behavior:"smooth"});}
 function loadSpreadEdit(id){
   const s=state.spreads.find(x=>x.id===id);if(!s)return;editSpreadId=id;
   if(SPREAD_TYPES[s.type])$("#sp-type").value=s.type;renderLegInputs();
@@ -2549,7 +2553,7 @@ function loadSpreadEdit(id){
     if(st)st.value=l.strike??"";if(op)op.value=l.open??"";if(cl)cl.value=l.close==null?"":l.close;});
   updateSpreadCalc();
   $("#spreadFormTitle").textContent="Edit Sell-Side Trade";$("#saveSpread").textContent="Save Changes";$("#cancelSpread").style.display="";
-  switchView("spreads");window.scrollTo({top:0,behavior:"smooth"});
+  switchView("spreads");scrollToForm("#spreadFormTitle");
 }
 /* ===================== SELL-SIDE INCOME DASHBOARD ===================== */
 function sdFillMonths(keys){keys=keys.filter(Boolean).sort();if(!keys.length)return [];const out=[];let[y,m]=keys[0].split("-").map(Number);const[ey,em]=keys[keys.length-1].split("-").map(Number);
