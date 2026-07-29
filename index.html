@@ -2056,11 +2056,11 @@ function tradeRowHtml(t,pl,isOpen){
     <td class="l">${t.date}</td>
     <td class="l"><span class="mut">—</span></td>
     <td class="l"><span class="badge ${t.instrument}">${t.instrument}</span></td>
-    <td class="l">${symLabel(t)}</td>
+    <td class="l">${t.symbol||""}</td>
     <td class="l">${t.account?t.account:'<span class="mut">—</span>'}</td>
     <td>${t.instrument==="option"?fmtDte(daysToExp(t.expiry)):'<span class="mut">—</span>'}</td>
     <td>${t.instrument==="option"&&t.expiry?t.expiry:'<span class="mut">—</span>'}</td>
-    <td>${t.instrument==="option"&&t.strike!=null&&t.strike!==""?t.strike:'<span class="mut">—</span>'}</td>
+    <td>${t.instrument==="option"&&t.strike!=null&&t.strike!==""?`${t.strike}${t.optionType?" "+t.optionType[0].toUpperCase():""}`:'<span class="mut">—</span>'}</td>
     <td class="l"><span class="badge ${t.action}">${t.action.toUpperCase()}</span></td>
     <td>${fmtNum(t.quantity)}</td>
     <td>${fmtNum(t.price)}</td>
