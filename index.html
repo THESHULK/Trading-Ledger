@@ -211,7 +211,8 @@ svg.chart{width:100%;display:block;overflow:visible}
 .sd-pos .ct{color:var(--muted)}
 .sd-pos .ptype{color:var(--muted);font-size:11px}
 .sd-pos .legs{color:var(--txt);letter-spacing:.02em}
-.sd-pos .legs .leg.itm{color:var(--red);font-weight:700}
+.sd-pos .legs.good{color:var(--green);font-weight:700}
+.sd-pos .legs.bad{color:var(--red);font-weight:700}
 .sd-pos .exp{color:var(--faint);font-size:11px}
 .sd-pos .pm{color:var(--green);margin-left:auto}
 .sd-pos .sd-edit{margin-left:4px}
@@ -1922,14 +1923,17 @@ async function fetchStockPrices(manual){
   try{
     const {openByKey}=computePnl(expandTrades(state.trades));
     const pos=openPositions(openByKey,state.marks).filter(p=>p.instrument==="stock");
-    const syms=[...new Set(pos.map(p=>p.symbol))];
-    if(syms.length===0){if(manual)toast("No open stock positions");setPriceStatus("");return;}
+    // also price the underlyings of open sell-side positions so ITM highlighting works
+    const spreadSyms=(state.spreads||[]).filter(s=>s.status!=="closed").map(s=>(s.symbol||"").toUpperCase().trim());
+    const syms=[...new Set([...pos.map(p=>p.symbol),...spreadSyms].filter(Boolean))];
+    if(syms.length===0){if(manual)toast("No open positions to price");setPriceStatus("");return;}
     setPriceStatus(`fetching ${syms.length}…`);
     let ok=0;
     for(const sym of syms){const p=await fetchQuote(sym);if(p!=null){state.marks["STK:"+sym]=Math.round(p*100)/100;ok++;}}
     save();
     if($("#view-positions").classList.contains("on"))renderPositions();
     if($("#view-dash").classList.contains("on"))renderDash();
+    if($("#view-spreads").classList.contains("on"))renderSpreads();
     setPriceStatus(ok?`updated ${ok}/${syms.length} · ${new Date().toLocaleTimeString()}`:"couldn't reach price source (offline or blocked)");
     if(manual)toast(ok?`Updated ${ok} stock price${ok>1?"s":""}`:"Price fetch failed — enter manually",ok?false:true);
   }finally{fetchingPrices=false;}
@@ -2645,16 +2649,19 @@ function renderSellDash(){
   const money=v=>fmtMoney(v).replace("−","-");
   const typeName=t=>((SPREAD_TYPES[t]&&SPREAD_TYPES[t].name)||t||"").toUpperCase();
   const markOf=sym=>{const v=state.marks&&state.marks["STK:"+sym];return (v!=null&&isFinite(v))?+v:null;};
+  const pastStrike=(l,spot)=>l&&l.strike!=null&&(l.optionType==="call"?spot>+l.strike:l.optionType==="put"?spot<+l.strike:false);
   const posHtml=d.posRows.length?d.posRows.map(p=>{
-    const spot=markOf(p.sym);
-    const legs=(p.legs||[]).map(l=>{
-      const t=(l.optionType||"")[0]?.toUpperCase()||"";
-      const itm=spot!=null&&l.strike!=null&&(l.optionType==="call"?spot>+l.strike:l.optionType==="put"?spot<+l.strike:false);
-      return `<span class="leg${itm?" itm":""}"${itm?' title="in the money"':''}>${l.side==="short"?"−":"+"}${t} ${fmtNum(l.strike)}</span>`;
-    }).join(" / ");
+    const spot=markOf(p.sym),credit=p.prem>=0;
+    // colour the whole position: credit wants to stay OUT of the money (short strike safe), debit wants to get IN.
+    // green = favourable, red = unfavourable. neutral when no underlying price yet.
+    let cls="",note="";
+    if(spot!=null){const trig=credit?(p.legs||[]).find(l=>l.side==="short"):(p.legs||[]).find(l=>l.side==="long");
+      if(trig){const inM=pastStrike(trig,spot);const good=credit?!inM:inM;cls=good?" good":" bad";
+        note=` title="underlying ${fmtNum(spot)} · ${inM?"in the money":"out of the money"}"`;}}
+    const legs=(p.legs||[]).map(l=>`<span class="leg">${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""} ${fmtNum(l.strike)}</span>`).join(" / ");
     return `<div class="prow"><span class="sym">${p.sym}</span>`+
       `<span class="ptype">${typeName(p.type)}</span>`+
-      `<span class="legs">${legs}</span>`+
+      `<span class="legs${cls}"${note}>${legs}</span>`+
       `<span class="exp">${p.expiry||"—"} · ${fmtDte(daysToExp(p.expiry))}</span>`+
       `<span class="pm">${fmtNum(p.qty)}× · ${money(p.prem)}</span>`+
       `<button class="iconbtn sd-edit" data-sedit="${attr(p.id)}" title="Edit this position">edit</button></div>`;
