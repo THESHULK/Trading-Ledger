@@ -2663,7 +2663,7 @@ function renderSellDash(){
       `<span class="ptype">${typeName(p.type)}</span>`+
       `<span class="legs${cls}"${note}>${legs}</span>`+
       `<span class="exp">${p.expiry||"—"} · ${fmtDte(daysToExp(p.expiry))}</span>`+
-      `<span class="pm">${fmtNum(p.qty)}× · ${money(p.prem)}</span>`+
+      `<span class="pm">QTY ${fmtNum(p.qty)} · ${money(p.prem)}</span>`+
       `<button class="iconbtn sd-edit" data-sedit="${attr(p.id)}" title="Edit this position">edit</button></div>`;
   }).join(""):`<div class="prow"><span class="ct">No open sell-side positions.</span></div>`;
   box.innerHTML=`<div class="sd">
