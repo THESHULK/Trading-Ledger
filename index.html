@@ -211,8 +211,8 @@ svg.chart{width:100%;display:block;overflow:visible}
 .sd-pos .ct{color:var(--muted)}
 .sd-pos .ptype{color:var(--muted);font-size:11px}
 .sd-pos .legs{color:var(--txt);letter-spacing:.02em}
-.sd-pos .legs.good{color:var(--green);font-weight:700}
-.sd-pos .legs.bad{color:var(--red);font-weight:700}
+.sd-pos .legs.good{color:#22c55e;font-weight:700}
+.sd-pos .legs.bad{color:#ff4d4d;font-weight:700}
 .sd-pos .exp{color:var(--faint);font-size:11px}
 .sd-pos .pm{color:var(--green);margin-left:auto}
 .sd-pos .sd-edit{margin-left:4px}
@@ -2815,6 +2815,8 @@ function switchView(v){
   document.querySelectorAll(".view").forEach(s=>s.classList.toggle("on",s.id==="view-"+v));
   if(v==="dash")renderDash();if(v==="trades")renderTrades();if(v==="positions")renderPositions();if(v==="spreads")renderSpreads();if(v==="prop")renderProp();
   if(v==="data")$("#countNote").textContent=`${state.trades.length} trades · ${state.spreads.length} sell-side · ${state.propfirm.length} prop firm · ${Object.keys(state.marks).length} marks stored`;
+  // pull underlying prices for the sell-side ITM colouring if any open symbol is unpriced
+  if((v==="spreads"||v==="positions")&&!fetchingPrices&&(state.spreads||[]).some(s=>s.status!=="closed"&&(s.symbol||"").trim()&&state.marks["STK:"+(s.symbol||"").toUpperCase().trim()]==null))fetchStockPrices(false);
 }
 function refreshAccounts(){const el=$("#acctList");if(!el)return;
   const accts=[...new Set([...state.trades,...state.spreads].map(x=>(x.account||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
