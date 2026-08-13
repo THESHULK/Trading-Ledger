@@ -2143,6 +2143,10 @@ let posSort={col:"unrealized",dir:-1};
 function renderPositions(){
   const {openByKey}=computePnl(expandTrades(state.trades));
   let pos=openPositions(openByKey,state.marks);
+  // include open sell-side (spread) positions; their unrealized comes from the legs, not an editable mark
+  for(const sp of (state.spreads||[]).filter(s=>s.status!=="closed")){const q=num(sp.quantity),net=spreadNetOpen(sp);
+    pos.push({key:"SP:"+sp.id,symbol:(sp.symbol||"?").toUpperCase(),instrument:"spread",direction:net>=0?"Credit":"Debit",
+      qty:q,avgPrice:net,mark:null,unrealized:net*q*100-num(sp.fees),_sp:sp});}
   const pgv=(p,c)=>p[c];
   const kinds={symbol:"text",instrument:"select",direction:"select"};
   const distinct={instrument:distinctVals(pos,p=>p.instrument),direction:distinctVals(pos,p=>p.direction)};
@@ -2152,7 +2156,15 @@ function renderPositions(){
   const cols=[["symbol","Symbol","l"],["instrument","Type","l"],["direction","Dir","l"],["qty","Qty",""],["avgPrice","Avg Price",""],["mark","Mark",""],["unrealized","Unrealized",""]];
   const head=headFilter(cols,posSort,kinds,posFilters,distinct,false);
   if(pos.length===0){t.innerHTML=head+`<tbody><tr><td colspan="7"><div class="empty">no open positions match these filters</div></td></tr></tbody>`;wireTable("#posTable",posSort,posFilters,renderPositions,["symbol","instrument","direction"]);return;}
-  t.innerHTML=head+`<tbody>`+pos.map(p=>`<tr>
+  t.innerHTML=head+`<tbody>`+pos.map(p=>p.instrument==="spread"?`<tr>
+    <td class="l">${p.symbol}<span class="mut" style="font-size:10px"> ${p._sp.type||""}${p._sp.expiry?" "+p._sp.expiry:""}</span></td>
+    <td class="l"><span class="badge spread">sell-side</span></td>
+    <td class="l ${p.direction==="Credit"?"pos":"neg"}">${p.direction}</td>
+    <td>${fmtNum(p.qty)}</td>
+    <td>${fmtNum(p.avgPrice)}</td>
+    <td class="mut">—</td>
+    <td class="${cls(p.unrealized)}">${fmtSignedColored(p.unrealized).replace("−","-")}</td>
+  </tr>`:`<tr>
     <td class="l">${p.symbol}${p.key.startsWith("OPT")?`<span class="mut" style="font-size:10px"> ${p.key.split(":").slice(2).join(" ")}</span>`:""}</td>
     <td class="l"><span class="badge ${p.instrument}">${p.instrument}</span></td>
     <td class="l ${p.direction==="Long"?"pos":"neg"}">${p.direction}</td>
