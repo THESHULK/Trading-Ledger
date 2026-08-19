@@ -380,6 +380,21 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .spreadcalc b{font-weight:700}
 .badge.spread{color:#ff9bd0;border-color:#73345a}
 .legsub{font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:2px}
+/* ---- roll modal ---- */
+.iconbtn.roll:hover{border-color:var(--green-dim);color:var(--green)}
+.modal.rollm{max-width:680px}
+.rollsec{border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin-bottom:12px;background:var(--bg2)}
+.rollsec h4{margin:0 0 10px;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:700}
+.rollgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(116px,1fr));gap:10px}
+.rollleg{display:grid;grid-template-columns:118px repeat(auto-fit,minmax(96px,1fr));gap:10px;align-items:end;margin-top:8px}
+.rollleg:first-of-type{margin-top:0}
+.rollleg .tag{font-family:var(--mono);font-size:11px;font-weight:700;padding:7px 0}
+.rollleg .tag.short{color:var(--red)}.rollleg .tag.long{color:var(--green)}
+.rollcalc{font-family:var(--mono);font-size:12.5px;color:var(--muted);display:flex;gap:18px;flex-wrap:wrap;
+  border-top:1px solid var(--line);padding-top:12px;margin-bottom:16px}
+.rollcalc b{font-weight:700}
+.rollcur{font-family:var(--mono);font-size:12px;color:var(--txt)}
+@media(max-width:680px){.rollleg{grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body>
@@ -708,6 +723,19 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <div class="modal-btns">
       <button class="btn primary" id="welcomeStart">Get started</button>
       <button class="btn ghost" id="welcomeDemo">Show me with demo data</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="rollModal">
+  <div class="modal rollm" role="dialog" aria-modal="true" aria-labelledby="rollTitle">
+    <h2 id="rollTitle">Roll position</h2>
+    <p class="lead" id="rollSub"></p>
+    <div id="rollBody"></div>
+    <div class="rollcalc" id="rollCalc"></div>
+    <div class="modal-btns">
+      <button class="btn primary" id="rollGo">Roll position</button>
+      <button class="btn ghost" id="rollCancel">Cancel</button>
     </div>
   </div>
 </div>
@@ -2074,6 +2102,7 @@ function tradeRowHtml(t,pl,isOpen){
     <td class="mut">${t.fees?fmtMoney(t.fees):"—"}</td>
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="opening trade — P/L is realized when it is closed">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-edit="${t.id}">edit</button>
+        ${t.instrument==="option"&&isOpen?`<button class="iconbtn roll" data-roll="${t.id}" title="Roll to a new strike / expiry">roll</button>`:""}
         <button class="iconbtn del" data-del="${t.id}">del</button></td>
   </tr>`;}
 function spreadRowHtml(s){
@@ -2094,6 +2123,7 @@ function spreadRowHtml(s){
     <td class="mut">${s.fees?fmtMoney(s.fees):"—"}</td>
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="open spread — P/L is realized when it is closed">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-sedit="${s.id}">edit ↗</button>
+        ${closed?"":`<button class="iconbtn roll" data-sroll="${s.id}" title="Roll to a new strike / expiry">roll</button>`}
         <button class="iconbtn del" data-sdel="${s.id}">del</button></td>
   </tr>`;}
 function renderTrades(){
@@ -2138,6 +2168,8 @@ function renderTrades(){
     if(!confirmDelete(tr?`this ${tr.instrument} trade (${(tr.symbol||"?").toUpperCase()})`:"this trade"))return;
     state.trades=state.trades.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadEdit(b.dataset.edit));
+  t.querySelectorAll("[data-roll]").forEach(b=>b.onclick=()=>openRoll("trade",b.dataset.roll));
+  t.querySelectorAll("[data-sroll]").forEach(b=>b.onclick=()=>openRoll("spread",b.dataset.sroll));
   t.querySelectorAll("[data-sdel]").forEach(b=>b.onclick=()=>{
     const sp=state.spreads.find(x=>x.id===b.dataset.sdel);
     if(!confirmDelete(sp?`this sell-side trade (${(sp.symbol||"?").toUpperCase()})`:"this sell-side trade"))return;
@@ -2664,6 +2696,7 @@ function renderSellDash(){
       `<span class="legs${cls}"${note}>${legs}</span>`+
       `<span class="exp">${p.expiry||"—"} · ${fmtDte(daysToExp(p.expiry))}</span>`+
       `<span class="pm">QTY ${fmtNum(p.qty)} · ${money(p.prem)}</span>`+
+      `<button class="iconbtn sd-roll" data-sroll="${attr(p.id)}" title="Roll to a new strike / expiry">roll</button>`+
       `<button class="iconbtn sd-edit" data-sedit="${attr(p.id)}" title="Edit this position">edit</button></div>`;
   }).join(""):`<div class="prow"><span class="ct">No open sell-side positions.</span></div>`;
   box.innerHTML=`<div class="sd">
@@ -2698,6 +2731,7 @@ function renderSellDash(){
   </div>`;
   sdWireCharts();
   box.querySelectorAll(".sd-edit").forEach(btn=>btn.onclick=()=>loadSpreadEdit(btn.dataset.sedit));
+  box.querySelectorAll(".sd-roll").forEach(btn=>btn.onclick=()=>openRoll("spread",btn.dataset.sroll));
 }
 function renderSpreads(){
   renderSellDash();
@@ -2742,11 +2776,158 @@ function renderSpreads(){
       <td class="mut">${closed?((netC>=0?"cr ":"db ")+fmtMoney(Math.abs(netC))):"—"}</td>
       <td class="${closed?cls(pnl):cls(un)}">${closed?fmtSignedColored(pnl).replace("−","-"):fmtSignedColored(un).replace("−","-")+'<div class="legsub">open</div>'}</td>
       <td><button class="iconbtn" data-edit="${s.id}">edit</button>
+          ${closed?"":`<button class="iconbtn roll" data-sroll="${s.id}" title="Roll to a new strike / expiry">roll</button>`}
           <button class="iconbtn del" data-del="${s.id}">del</button></td>
     </tr>`;}).join("")+`</tbody>`;
   wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp","strike"]);
   t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{const sp=state.spreads.find(x=>x.id===b.dataset.del);if(!confirmDelete(sp?`this sell-side trade (${(sp.symbol||"?").toUpperCase()})`:"this sell-side trade"))return;state.spreads=state.spreads.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadSpreadEdit(b.dataset.edit));
+  t.querySelectorAll("[data-sroll]").forEach(b=>b.onclick=()=>openRoll("spread",b.dataset.sroll));
+}
+
+/* ============================ ROLL ============================ */
+/* Rolling = close the current option/spread and open a replacement in one step.
+   For trades it writes two executions (a closing trade at the old strike/expiry, then an
+   opening trade at the new one) so the existing FIFO matcher realizes the P/L normally.
+   For spreads it closes the current one (leg close prices + close date) and pushes a new
+   open spread with the new strikes/expiry. */
+let rollCtx=null;
+const rollLegTag=l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""} ${fmtNum(l.strike)}`;
+function openRoll(kind,id){
+  const o=$("#rollModal");if(!o)return;
+  if(kind==="trade"){
+    const t=state.trades.find(x=>x.id===id);
+    if(!t){toast("Trade not found",true);return;}
+    if(t.instrument!=="option"){toast("Only option trades can be rolled",true);return;}
+    rollCtx={kind,id,t};
+    const short=t.action==="sell";
+    $("#rollSub").innerHTML=`<span class="rollcur">${t.symbol} ${t.expiry||""} ${fmtNum(t.strike)}${(t.optionType||"")[0]?.toUpperCase()||""} · ${short?"SHORT":"LONG"} ${fmtNum(t.quantity)} @ ${fmtNum(t.price)}</span>`;
+    $("#rollBody").innerHTML=`
+      <div class="rollsec"><h4>Close the current option</h4>
+        <div class="rollgrid">
+          <div class="field"><label>${short?"Buy to close":"Sell to close"}</label><input type="number" step="any" id="r-close" placeholder="0.00"></div>
+          <div class="field"><label>Quantity</label><input type="number" step="any" min="0" id="r-qty" value="${attr(t.quantity)}"></div>
+          <div class="field"><label>Roll date</label><input type="date" id="r-date" value="${today()}"></div>
+          <div class="field"><label>Close fees</label><input type="number" step="any" id="r-cfees" placeholder="0"></div>
+        </div>
+      </div>
+      <div class="rollsec"><h4>Open the new option</h4>
+        <div class="rollgrid">
+          <div class="field"><label>New expiry</label><input type="date" id="r-exp" value="${attr(t.expiry||"")}"></div>
+          <div class="field"><label>New strike</label><input type="number" step="any" id="r-strike" value="${attr(t.strike??"")}"></div>
+          <div class="field"><label>Type</label><select id="r-otype"><option value="call">Call</option><option value="put">Put</option></select></div>
+          <div class="field"><label>${short?"Sell to open":"Buy to open"}</label><input type="number" step="any" id="r-open" placeholder="0.00"></div>
+          <div class="field"><label>Open fees</label><input type="number" step="any" id="r-ofees" placeholder="0"></div>
+        </div>
+      </div>`;
+    $("#r-otype").value=t.optionType||"call";
+  }else{
+    const sp=state.spreads.find(x=>x.id===id);
+    if(!sp){toast("Position not found",true);return;}
+    rollCtx={kind,id,sp};
+    $("#rollSub").innerHTML=`<span class="rollcur">${sp.symbol} ${(SPREAD_TYPES[sp.type]&&SPREAD_TYPES[sp.type].name)||sp.type||""} · ${sp.legs.map(rollLegTag).join(" / ")} · exp ${sp.expiry||"—"} · qty ${fmtNum(sp.quantity)}</span>`;
+    $("#rollBody").innerHTML=`
+      <div class="rollsec"><h4>Close the current position</h4>
+        ${sp.legs.map((l,i)=>`<div class="rollleg">
+          <div class="tag ${l.side}">${rollLegTag(l)}</div>
+          <div class="field"><label>${l.side==="short"?"Buy to close":"Sell to close"}</label><input type="number" step="any" class="r-lclose" data-i="${i}" placeholder="0.00"></div>
+        </div>`).join("")}
+        <div class="rollgrid" style="margin-top:10px">
+          <div class="field"><label>Roll date</label><input type="date" id="r-date" value="${today()}"></div>
+          <div class="field"><label>Close fees</label><input type="number" step="any" id="r-cfees" placeholder="0"></div>
+        </div>
+      </div>
+      <div class="rollsec"><h4>Open the new position</h4>
+        ${sp.legs.map((l,i)=>`<div class="rollleg">
+          <div class="tag ${l.side}">${l.side==="short"?"SHORT":"LONG"} ${(l.optionType||"").toUpperCase()}</div>
+          <div class="field"><label>New strike</label><input type="number" step="any" class="r-lstrike" data-i="${i}" value="${attr(l.strike??"")}"></div>
+          <div class="field"><label>${l.side==="short"?"Sell to open":"Buy to open"}</label><input type="number" step="any" class="r-lopen" data-i="${i}" placeholder="0.00"></div>
+        </div>`).join("")}
+        <div class="rollgrid" style="margin-top:10px">
+          <div class="field"><label>New expiry</label><input type="date" id="r-exp" value="${attr(sp.expiry||"")}"></div>
+          <div class="field"><label>New quantity</label><input type="number" step="any" min="0" id="r-qty" value="${attr(sp.quantity)}"></div>
+          <div class="field"><label>Open fees</label><input type="number" step="any" id="r-ofees" placeholder="0"></div>
+        </div>
+      </div>`;
+  }
+  $("#rollBody").querySelectorAll("input,select").forEach(inp=>inp.oninput=updateRollCalc);
+  updateRollCalc();
+  o.classList.add("show");
+}
+function closeRoll(){const o=$("#rollModal");if(o)o.classList.remove("show");rollCtx=null;}
+const rollVal=sel=>{const el=$(sel);const v=el?parseFloat(el.value):NaN;return isFinite(v)?v:null;};
+/* per-share figures for the current modal state: what closing costs, what the new one brings in,
+   and the P/L locked in on the position being closed. nulls until the inputs are filled. */
+function rollFigures(){
+  if(!rollCtx)return null;
+  const qty=rollVal("#r-qty")||0,cfees=rollVal("#r-cfees")||0,ofees=rollVal("#r-ofees")||0;
+  if(rollCtx.kind==="trade"){
+    const t=rollCtx.t,short=t.action==="sell",mult=num(t.multiplier,100)||100;
+    const cl=rollVal("#r-close"),op=rollVal("#r-open");
+    const net=(cl==null||op==null)?null:(short?op-cl:cl-op);
+    // match what the FIFO matcher will realize: include the opening trade's own fees, prorated
+    const openFee=num(t.quantity)?num(t.fees)/num(t.quantity)*qty:num(t.fees);
+    const closedPl=cl==null?null:((short?num(t.price)-cl:cl-num(t.price))*qty*mult-cfees-openFee);
+    return {qty,mult,net,closedPl,cfees,ofees};
+  }
+  const sp=rollCtx.sp;
+  const cls_=sp.legs.map((l,i)=>rollVal(`.r-lclose[data-i="${i}"]`));
+  const ops=sp.legs.map((l,i)=>rollVal(`.r-lopen[data-i="${i}"]`));
+  const netClose=cls_.every(v=>v!=null)?sp.legs.reduce((a,l,i)=>a+(l.side==="short"?cls_[i]:-cls_[i]),0):null;
+  const netOpen=ops.every(v=>v!=null)?sp.legs.reduce((a,l,i)=>a+(l.side==="short"?ops[i]:-ops[i]),0):null;
+  const net=(netClose==null||netOpen==null)?null:netOpen-netClose;
+  const closedPl=netClose==null?null:((spreadNetOpen(sp)-netClose)*num(sp.quantity)*100-num(sp.fees)-cfees);
+  return {qty,mult:100,net,closedPl,cfees,ofees,closes:cls_,opens:ops};
+}
+function updateRollCalc(){
+  const f=rollFigures();const box=$("#rollCalc");if(!box)return;
+  if(!f){box.innerHTML="";return;}
+  let h="";
+  h+=`<span>Closing P/L: ${f.closedPl==null?'<b class="mut">—</b>':`<b class="${cls(f.closedPl)}">${fmtSignedColored(f.closedPl).replace("−","-")}</b>`}</span>`;
+  if(f.net==null)h+=`<span class="mut">enter close &amp; open prices for the roll credit</span>`;
+  else{const cash=f.net*f.qty*f.mult-f.ofees;
+    h+=`<span>Roll: <b class="${f.net>=0?'pos':'neg'}">${f.net>=0?"credit ":"debit "}${fmtMoney(Math.abs(f.net))}</b>/sh</span>`+
+       `<span>Net cash: <b class="${cls(cash)}">${fmtSignedColored(cash).replace("−","-")}</b></span>`;}
+  box.innerHTML=h;
+}
+function doRoll(){
+  if(!rollCtx)return;
+  const f=rollFigures();
+  const date=($("#r-date")||{}).value||today();
+  const exp=($("#r-exp")||{}).value||"";
+  if(!(f.qty>0)){toast("Quantity must be > 0",true);return;}
+  if(!exp){toast("Enter the new expiry",true);return;}
+  if(!futureDateOK(date))return;
+  if(rollCtx.kind==="trade"){
+    const t=state.trades.find(x=>x.id===rollCtx.id);if(!t){closeRoll();return;}
+    const cl=rollVal("#r-close"),op=rollVal("#r-open"),strike=rollVal("#r-strike");
+    if(cl==null){toast("Enter what you closed the current option for",true);return;}
+    if(op==null){toast("Enter the price of the new option",true);return;}
+    if(strike==null){toast("Enter the new strike",true);return;}
+    const mk=(o)=>({id:"t"+Date.now()+Math.random().toString(36).slice(2,6),_seq:state.seq++,
+      date,instrument:"option",symbol:t.symbol,account:t.account||"",
+      multiplier:num(t.multiplier,100)||100,quantity:f.qty,...o});
+    // close at the CURRENT contract's key so the matcher pairs it with the open lot
+    state.trades.push(mk({action:t.action==="sell"?"buy":"sell",price:cl,fees:f.cfees,
+      expiry:t.expiry||"",strike:num(t.strike),optionType:t.optionType||"call",rolledFrom:t.id}));
+    state.trades.push(mk({action:t.action,price:op,fees:f.ofees,
+      expiry:exp,strike:strike,optionType:($("#r-otype")||{}).value||t.optionType||"call",rolledFrom:t.id}));
+  }else{
+    const sp=state.spreads.find(x=>x.id===rollCtx.id);if(!sp){closeRoll();return;}
+    if(f.closes.some(v=>v==null)){toast("Enter a close price for every leg",true);return;}
+    if(f.opens.some(v=>v==null)){toast("Enter an open price for every new leg",true);return;}
+    const strikes=sp.legs.map((l,i)=>rollVal(`.r-lstrike[data-i="${i}"]`));
+    if(strikes.some(v=>v==null)){toast("Enter a strike for every new leg",true);return;}
+    const defs=sp.legs.map(l=>({side:l.side,optionType:l.optionType}));
+    sp.legs=sp.legs.map((l,i)=>({...l,close:f.closes[i]}));
+    sp.dateClosed=date;sp.fees=num(sp.fees)+f.cfees;sp.status="closed";
+    state.spreads.push({id:"sp"+Date.now()+Math.random().toString(36).slice(2,5),
+      type:sp.type,symbol:sp.symbol,account:sp.account||"",expiry:exp,quantity:f.qty,
+      dateOpened:date,dateClosed:"",fees:f.ofees,status:"open",rolledFrom:sp.id,
+      legs:defs.map((d,i)=>({side:d.side,optionType:d.optionType,strike:strikes[i],open:f.opens[i],close:null}))});
+  }
+  save();closeRoll();refreshAll();
+  toast(f.net!=null&&f.net<0?"Rolled for a debit":"Rolled");
 }
 
 /* ============================ PROP FIRM ============================ */
@@ -2889,6 +3070,10 @@ function init(){
   $("#welcomeStart").onclick=closeWelcome;
   $("#welcomeDemo").onclick=()=>{closeWelcome();$("#demoToggle").checked=true;setDemo(true);switchView("dash");};
   $("#showWelcome").onclick=openWelcome;
+  $("#rollGo").onclick=doRoll;
+  $("#rollCancel").onclick=closeRoll;
+  $("#rollModal").addEventListener("click",e=>{if(e.target===$("#rollModal"))closeRoll();});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#rollModal").classList.contains("show"))closeRoll();});
   $("#welcomeModal").addEventListener("click",e=>{if(e.target===$("#welcomeModal"))closeWelcome();});
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#welcomeModal").classList.contains("show"))closeWelcome();});
   if(!welcomeSeen())openWelcome();
