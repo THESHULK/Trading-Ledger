@@ -205,13 +205,17 @@ svg.chart{width:100%;display:block;overflow:visible}
 .sd-cell .big{font-size:18px;font-weight:700;color:var(--txt);margin-top:4px}
 .sd-cell .sub{color:var(--faint);font-size:10px;margin-top:2px}
 .sd-pos{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
-.sd-pos .prow{display:flex;flex-wrap:wrap;align-items:center;gap:5px 14px;padding:11px 16px;border-top:1px solid var(--line);font-size:12.5px}
+.sd-pos .prow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:11px 16px;border-top:1px solid var(--line);font-size:12.5px}
 .sd-pos .prow:first-child{border-top:0}
-.sd-pos .sym{font-weight:700;color:var(--txt);min-width:50px}
+.sd-pos .sym{font-weight:700;color:var(--txt);min-width:48px}
 .sd-pos .ct{color:var(--muted)}
-.sd-pos .pm{color:var(--green)}
-.sd-pos .rt{color:var(--faint);font-size:10.5px;letter-spacing:.04em;margin-left:auto}
-.sd-pos .sd-edit{margin-left:6px}
+.sd-pos .ptype{color:var(--muted);font-size:11px}
+.sd-pos .legs{color:var(--txt);letter-spacing:.02em}
+.sd-pos .legs.good{color:#22c55e;font-weight:700}
+.sd-pos .legs.bad{color:#ff4d4d;font-weight:700}
+.sd-pos .exp{color:var(--faint);font-size:11px}
+.sd-pos .pm{color:var(--green);margin-left:auto}
+.sd-pos .sd-edit{margin-left:4px}
 .demoswitch{display:inline-flex;align-items:center;gap:9px;font-size:14px;font-weight:600;cursor:pointer;margin-top:10px;color:var(--txt)}
 .demoswitch input{width:18px;height:18px;accent-color:var(--green);cursor:pointer}
 .ai-provider-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px}
@@ -376,6 +380,21 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .spreadcalc b{font-weight:700}
 .badge.spread{color:#ff9bd0;border-color:#73345a}
 .legsub{font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:2px}
+/* ---- roll modal ---- */
+.iconbtn.roll:hover{border-color:var(--green-dim);color:var(--green)}
+.modal.rollm{max-width:680px}
+.rollsec{border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin-bottom:12px;background:var(--bg2)}
+.rollsec h4{margin:0 0 10px;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:700}
+.rollgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(116px,1fr));gap:10px}
+.rollleg{display:grid;grid-template-columns:118px repeat(auto-fit,minmax(96px,1fr));gap:10px;align-items:end;margin-top:8px}
+.rollleg:first-of-type{margin-top:0}
+.rollleg .tag{font-family:var(--mono);font-size:11px;font-weight:700;padding:7px 0}
+.rollleg .tag.short{color:var(--red)}.rollleg .tag.long{color:var(--green)}
+.rollcalc{font-family:var(--mono);font-size:12.5px;color:var(--muted);display:flex;gap:18px;flex-wrap:wrap;
+  border-top:1px solid var(--line);padding-top:12px;margin-bottom:16px}
+.rollcalc b{font-weight:700}
+.rollcur{font-family:var(--mono);font-size:12px;color:var(--txt)}
+@media(max-width:680px){.rollleg{grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body>
@@ -704,6 +723,19 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <div class="modal-btns">
       <button class="btn primary" id="welcomeStart">Get started</button>
       <button class="btn ghost" id="welcomeDemo">Show me with demo data</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="rollModal">
+  <div class="modal rollm" role="dialog" aria-modal="true" aria-labelledby="rollTitle">
+    <h2 id="rollTitle">Roll position</h2>
+    <p class="lead" id="rollSub"></p>
+    <div id="rollBody"></div>
+    <div class="rollcalc" id="rollCalc"></div>
+    <div class="modal-btns">
+      <button class="btn primary" id="rollGo">Roll position</button>
+      <button class="btn ghost" id="rollCancel">Cancel</button>
     </div>
   </div>
 </div>
@@ -1919,14 +1951,17 @@ async function fetchStockPrices(manual){
   try{
     const {openByKey}=computePnl(expandTrades(state.trades));
     const pos=openPositions(openByKey,state.marks).filter(p=>p.instrument==="stock");
-    const syms=[...new Set(pos.map(p=>p.symbol))];
-    if(syms.length===0){if(manual)toast("No open stock positions");setPriceStatus("");return;}
+    // also price the underlyings of open sell-side positions so ITM highlighting works
+    const spreadSyms=(state.spreads||[]).filter(s=>s.status!=="closed").map(s=>(s.symbol||"").toUpperCase().trim());
+    const syms=[...new Set([...pos.map(p=>p.symbol),...spreadSyms].filter(Boolean))];
+    if(syms.length===0){if(manual)toast("No open positions to price");setPriceStatus("");return;}
     setPriceStatus(`fetching ${syms.length}…`);
     let ok=0;
     for(const sym of syms){const p=await fetchQuote(sym);if(p!=null){state.marks["STK:"+sym]=Math.round(p*100)/100;ok++;}}
     save();
     if($("#view-positions").classList.contains("on"))renderPositions();
     if($("#view-dash").classList.contains("on"))renderDash();
+    if($("#view-spreads").classList.contains("on"))renderSpreads();
     setPriceStatus(ok?`updated ${ok}/${syms.length} · ${new Date().toLocaleTimeString()}`:"couldn't reach price source (offline or blocked)");
     if(manual)toast(ok?`Updated ${ok} stock price${ok>1?"s":""}`:"Price fetch failed — enter manually",ok?false:true);
   }finally{fetchingPrices=false;}
@@ -2067,6 +2102,7 @@ function tradeRowHtml(t,pl,isOpen){
     <td class="mut">${t.fees?fmtMoney(t.fees):"—"}</td>
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="opening trade — P/L is realized when it is closed">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-edit="${t.id}">edit</button>
+        ${t.instrument==="option"&&isOpen?`<button class="iconbtn roll" data-roll="${t.id}" title="Roll to a new strike / expiry">roll</button>`:""}
         <button class="iconbtn del" data-del="${t.id}">del</button></td>
   </tr>`;}
 function spreadRowHtml(s){
@@ -2087,6 +2123,7 @@ function spreadRowHtml(s){
     <td class="mut">${s.fees?fmtMoney(s.fees):"—"}</td>
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="open spread — P/L is realized when it is closed">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-sedit="${s.id}">edit ↗</button>
+        ${closed?"":`<button class="iconbtn roll" data-sroll="${s.id}" title="Roll to a new strike / expiry">roll</button>`}
         <button class="iconbtn del" data-sdel="${s.id}">del</button></td>
   </tr>`;}
 function renderTrades(){
@@ -2131,6 +2168,8 @@ function renderTrades(){
     if(!confirmDelete(tr?`this ${tr.instrument} trade (${(tr.symbol||"?").toUpperCase()})`:"this trade"))return;
     state.trades=state.trades.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadEdit(b.dataset.edit));
+  t.querySelectorAll("[data-roll]").forEach(b=>b.onclick=()=>openRoll("trade",b.dataset.roll));
+  t.querySelectorAll("[data-sroll]").forEach(b=>b.onclick=()=>openRoll("spread",b.dataset.sroll));
   t.querySelectorAll("[data-sdel]").forEach(b=>b.onclick=()=>{
     const sp=state.spreads.find(x=>x.id===b.dataset.sdel);
     if(!confirmDelete(sp?`this sell-side trade (${(sp.symbol||"?").toUpperCase()})`:"this sell-side trade"))return;
@@ -2143,6 +2182,10 @@ let posSort={col:"unrealized",dir:-1};
 function renderPositions(){
   const {openByKey}=computePnl(expandTrades(state.trades));
   let pos=openPositions(openByKey,state.marks);
+  // include open sell-side (spread) positions; their unrealized comes from the legs, not an editable mark
+  for(const sp of (state.spreads||[]).filter(s=>s.status!=="closed")){const q=num(sp.quantity),net=spreadNetOpen(sp);
+    pos.push({key:"SP:"+sp.id,symbol:(sp.symbol||"?").toUpperCase(),instrument:"sell-side",direction:net>=0?"Credit":"Debit",
+      qty:q,avgPrice:net,mark:null,unrealized:net*q*100-num(sp.fees),_sp:sp});}
   const pgv=(p,c)=>p[c];
   const kinds={symbol:"text",instrument:"select",direction:"select"};
   const distinct={instrument:distinctVals(pos,p=>p.instrument),direction:distinctVals(pos,p=>p.direction)};
@@ -2152,7 +2195,15 @@ function renderPositions(){
   const cols=[["symbol","Symbol","l"],["instrument","Type","l"],["direction","Dir","l"],["qty","Qty",""],["avgPrice","Avg Price",""],["mark","Mark",""],["unrealized","Unrealized",""]];
   const head=headFilter(cols,posSort,kinds,posFilters,distinct,false);
   if(pos.length===0){t.innerHTML=head+`<tbody><tr><td colspan="7"><div class="empty">no open positions match these filters</div></td></tr></tbody>`;wireTable("#posTable",posSort,posFilters,renderPositions,["symbol","instrument","direction"]);return;}
-  t.innerHTML=head+`<tbody>`+pos.map(p=>`<tr>
+  t.innerHTML=head+`<tbody>`+pos.map(p=>p.instrument==="sell-side"?`<tr>
+    <td class="l">${p.symbol}<span class="mut" style="font-size:10px"> ${p._sp.type||""} ${(p._sp.legs||[]).map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""}${fmtNum(l.strike)}`).join(" / ")}${p._sp.expiry?" · "+p._sp.expiry:""}</span></td>
+    <td class="l"><span class="badge spread">sell-side</span></td>
+    <td class="l ${p.direction==="Credit"?"pos":"neg"}">${p.direction}</td>
+    <td>${fmtNum(p.qty)}</td>
+    <td>${fmtNum(p.avgPrice)}</td>
+    <td class="mut">—</td>
+    <td class="${cls(p.unrealized)}">${fmtSignedColored(p.unrealized).replace("−","-")}</td>
+  </tr>`:`<tr>
     <td class="l">${p.symbol}${p.key.startsWith("OPT")?`<span class="mut" style="font-size:10px"> ${p.key.split(":").slice(2).join(" ")}</span>`:""}</td>
     <td class="l"><span class="badge ${p.instrument}">${p.instrument}</span></td>
     <td class="l ${p.direction==="Long"?"pos":"neg"}">${p.direction}</td>
@@ -2578,10 +2629,9 @@ function sellDashMetrics(sps){
   let best=null,worst=null;for(const s of closed){const r=spreadRealized(s);if(best==null||r>best.r)best={r,s};if(worst==null||r<worst.r)worst={r,s};}
   const bySym={};for(const s of sps){const k=(s.symbol||"?").toUpperCase();bySym[k]=(bySym[k]||0)+1;}
   let mostSym="—",mostN=0;for(const k in bySym)if(bySym[k]>mostN){mostN=bySym[k];mostSym=k;}
-  const posBySym={};for(const s of openSp){const k=(s.symbol||"?").toUpperCase();
-    const p=posBySym[k]||(posBySym[k]={sym:k,contracts:0,prem:0,count:0,types:{},ids:[]});
-    p.contracts+=num(s.quantity);p.prem+=spreadNetOpen(s)*num(s.quantity)*100;p.count++;p.types[s.type]=(p.types[s.type]||0)+1;p.ids.push(s.id);}
-  const posRows=Object.values(posBySym).sort((a,b)=>b.prem-a.prem);
+  // one row per open spread so each can show its own strikes, expiry and edit button
+  const posRows=openSp.map(s=>({id:s.id,sym:(s.symbol||"?").toUpperCase(),type:s.type,qty:num(s.quantity),
+    prem:spreadNetOpen(s)*num(s.quantity)*100,expiry:s.expiry||"",legs:s.legs||[]})).sort((a,b)=>b.prem-a.prem);
   return {realized,collected,openPrem,realByMo,creditByMo,monthsCount,curMo,
     realizedMo:realByMo[curMo]||0,collectedMo:creditByMo[curMo]||0,
     avgMonthly:realized/monthsCount,avgCollected:collected/monthsCount,
@@ -2630,14 +2680,24 @@ function renderSellDash(){
   const d=sellDashMetrics(sps);
   const money=v=>fmtMoney(v).replace("−","-");
   const typeName=t=>((SPREAD_TYPES[t]&&SPREAD_TYPES[t].name)||t||"").toUpperCase();
+  const markOf=sym=>{const v=state.marks&&state.marks["STK:"+sym];return (v!=null&&isFinite(v))?+v:null;};
+  const pastStrike=(l,spot)=>l&&l.strike!=null&&(l.optionType==="call"?spot>+l.strike:l.optionType==="put"?spot<+l.strike:false);
   const posHtml=d.posRows.length?d.posRows.map(p=>{
-    const domType=Object.keys(p.types).sort((a,b)=>p.types[b]-p.types[a])[0];
-    const right=p.count>1?`${p.count} positions`:typeName(domType);
-    const editAttr=p.count===1?`data-sedit="${attr(p.ids[0])}"`:`data-sfilter="${attr(p.sym)}"`;
-    const editTitle=p.count===1?"Edit this position":"Show this symbol in the table below";
-    return `<div class="prow"><span class="sym">${p.sym}</span><span class="ct">${fmtNum(p.contracts)} contracts</span>`+
-      `<span class="pm">total premiums: ${money(p.prem)}</span><span class="rt">${right}</span>`+
-      `<button class="iconbtn sd-edit" ${editAttr} title="${editTitle}">edit</button></div>`;
+    const spot=markOf(p.sym),credit=p.prem>=0;
+    // colour the whole position: credit wants to stay OUT of the money (short strike safe), debit wants to get IN.
+    // green = favourable, red = unfavourable. neutral when no underlying price yet.
+    let cls="",note="";
+    if(spot!=null){const trig=credit?(p.legs||[]).find(l=>l.side==="short"):(p.legs||[]).find(l=>l.side==="long");
+      if(trig){const inM=pastStrike(trig,spot);const good=credit?!inM:inM;cls=good?" good":" bad";
+        note=` title="underlying ${fmtNum(spot)} · ${inM?"in the money":"out of the money"}"`;}}
+    const legs=(p.legs||[]).map(l=>`<span class="leg">${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""} ${fmtNum(l.strike)}</span>`).join(" / ");
+    return `<div class="prow"><span class="sym">${p.sym}</span>`+
+      `<span class="ptype">${typeName(p.type)}</span>`+
+      `<span class="legs${cls}"${note}>${legs}</span>`+
+      `<span class="exp">${p.expiry||"—"} · ${fmtDte(daysToExp(p.expiry))}</span>`+
+      `<span class="pm">QTY ${fmtNum(p.qty)} · ${money(p.prem)}</span>`+
+      `<button class="iconbtn sd-roll" data-sroll="${attr(p.id)}" title="Roll to a new strike / expiry">roll</button>`+
+      `<button class="iconbtn sd-edit" data-sedit="${attr(p.id)}" title="Edit this position">edit</button></div>`;
   }).join(""):`<div class="prow"><span class="ct">No open sell-side positions.</span></div>`;
   box.innerHTML=`<div class="sd">
     <div class="tip" id="sdTip"></div>
@@ -2670,10 +2730,8 @@ function renderSellDash(){
     <div class="sd-pos">${posHtml}</div>
   </div>`;
   sdWireCharts();
-  box.querySelectorAll(".sd-edit").forEach(btn=>btn.onclick=()=>{
-    if(btn.dataset.sedit){loadSpreadEdit(btn.dataset.sedit);}                      // one position for this symbol → edit it directly
-    else{spreadFilters.symbol=btn.dataset.sfilter;renderSpreads();scrollToForm("#spreadTable");}  // several → filter the table so you can pick
-  });
+  box.querySelectorAll(".sd-edit").forEach(btn=>btn.onclick=()=>loadSpreadEdit(btn.dataset.sedit));
+  box.querySelectorAll(".sd-roll").forEach(btn=>btn.onclick=()=>openRoll("spread",btn.dataset.sroll));
 }
 function renderSpreads(){
   renderSellDash();
@@ -2718,11 +2776,158 @@ function renderSpreads(){
       <td class="mut">${closed?((netC>=0?"cr ":"db ")+fmtMoney(Math.abs(netC))):"—"}</td>
       <td class="${closed?cls(pnl):cls(un)}">${closed?fmtSignedColored(pnl).replace("−","-"):fmtSignedColored(un).replace("−","-")+'<div class="legsub">open</div>'}</td>
       <td><button class="iconbtn" data-edit="${s.id}">edit</button>
+          ${closed?"":`<button class="iconbtn roll" data-sroll="${s.id}" title="Roll to a new strike / expiry">roll</button>`}
           <button class="iconbtn del" data-del="${s.id}">del</button></td>
     </tr>`;}).join("")+`</tbody>`;
   wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp","strike"]);
   t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{const sp=state.spreads.find(x=>x.id===b.dataset.del);if(!confirmDelete(sp?`this sell-side trade (${(sp.symbol||"?").toUpperCase()})`:"this sell-side trade"))return;state.spreads=state.spreads.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadSpreadEdit(b.dataset.edit));
+  t.querySelectorAll("[data-sroll]").forEach(b=>b.onclick=()=>openRoll("spread",b.dataset.sroll));
+}
+
+/* ============================ ROLL ============================ */
+/* Rolling = close the current option/spread and open a replacement in one step.
+   For trades it writes two executions (a closing trade at the old strike/expiry, then an
+   opening trade at the new one) so the existing FIFO matcher realizes the P/L normally.
+   For spreads it closes the current one (leg close prices + close date) and pushes a new
+   open spread with the new strikes/expiry. */
+let rollCtx=null;
+const rollLegTag=l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""} ${fmtNum(l.strike)}`;
+function openRoll(kind,id){
+  const o=$("#rollModal");if(!o)return;
+  if(kind==="trade"){
+    const t=state.trades.find(x=>x.id===id);
+    if(!t){toast("Trade not found",true);return;}
+    if(t.instrument!=="option"){toast("Only option trades can be rolled",true);return;}
+    rollCtx={kind,id,t};
+    const short=t.action==="sell";
+    $("#rollSub").innerHTML=`<span class="rollcur">${t.symbol} ${t.expiry||""} ${fmtNum(t.strike)}${(t.optionType||"")[0]?.toUpperCase()||""} · ${short?"SHORT":"LONG"} ${fmtNum(t.quantity)} @ ${fmtNum(t.price)}</span>`;
+    $("#rollBody").innerHTML=`
+      <div class="rollsec"><h4>Close the current option</h4>
+        <div class="rollgrid">
+          <div class="field"><label>${short?"Buy to close":"Sell to close"}</label><input type="number" step="any" id="r-close" placeholder="0.00"></div>
+          <div class="field"><label>Quantity</label><input type="number" step="any" min="0" id="r-qty" value="${attr(t.quantity)}"></div>
+          <div class="field"><label>Roll date</label><input type="date" id="r-date" value="${today()}"></div>
+          <div class="field"><label>Close fees</label><input type="number" step="any" id="r-cfees" placeholder="0"></div>
+        </div>
+      </div>
+      <div class="rollsec"><h4>Open the new option</h4>
+        <div class="rollgrid">
+          <div class="field"><label>New expiry</label><input type="date" id="r-exp" value="${attr(t.expiry||"")}"></div>
+          <div class="field"><label>New strike</label><input type="number" step="any" id="r-strike" value="${attr(t.strike??"")}"></div>
+          <div class="field"><label>Type</label><select id="r-otype"><option value="call">Call</option><option value="put">Put</option></select></div>
+          <div class="field"><label>${short?"Sell to open":"Buy to open"}</label><input type="number" step="any" id="r-open" placeholder="0.00"></div>
+          <div class="field"><label>Open fees</label><input type="number" step="any" id="r-ofees" placeholder="0"></div>
+        </div>
+      </div>`;
+    $("#r-otype").value=t.optionType||"call";
+  }else{
+    const sp=state.spreads.find(x=>x.id===id);
+    if(!sp){toast("Position not found",true);return;}
+    rollCtx={kind,id,sp};
+    $("#rollSub").innerHTML=`<span class="rollcur">${sp.symbol} ${(SPREAD_TYPES[sp.type]&&SPREAD_TYPES[sp.type].name)||sp.type||""} · ${sp.legs.map(rollLegTag).join(" / ")} · exp ${sp.expiry||"—"} · qty ${fmtNum(sp.quantity)}</span>`;
+    $("#rollBody").innerHTML=`
+      <div class="rollsec"><h4>Close the current position</h4>
+        ${sp.legs.map((l,i)=>`<div class="rollleg">
+          <div class="tag ${l.side}">${rollLegTag(l)}</div>
+          <div class="field"><label>${l.side==="short"?"Buy to close":"Sell to close"}</label><input type="number" step="any" class="r-lclose" data-i="${i}" placeholder="0.00"></div>
+        </div>`).join("")}
+        <div class="rollgrid" style="margin-top:10px">
+          <div class="field"><label>Roll date</label><input type="date" id="r-date" value="${today()}"></div>
+          <div class="field"><label>Close fees</label><input type="number" step="any" id="r-cfees" placeholder="0"></div>
+        </div>
+      </div>
+      <div class="rollsec"><h4>Open the new position</h4>
+        ${sp.legs.map((l,i)=>`<div class="rollleg">
+          <div class="tag ${l.side}">${l.side==="short"?"SHORT":"LONG"} ${(l.optionType||"").toUpperCase()}</div>
+          <div class="field"><label>New strike</label><input type="number" step="any" class="r-lstrike" data-i="${i}" value="${attr(l.strike??"")}"></div>
+          <div class="field"><label>${l.side==="short"?"Sell to open":"Buy to open"}</label><input type="number" step="any" class="r-lopen" data-i="${i}" placeholder="0.00"></div>
+        </div>`).join("")}
+        <div class="rollgrid" style="margin-top:10px">
+          <div class="field"><label>New expiry</label><input type="date" id="r-exp" value="${attr(sp.expiry||"")}"></div>
+          <div class="field"><label>New quantity</label><input type="number" step="any" min="0" id="r-qty" value="${attr(sp.quantity)}"></div>
+          <div class="field"><label>Open fees</label><input type="number" step="any" id="r-ofees" placeholder="0"></div>
+        </div>
+      </div>`;
+  }
+  $("#rollBody").querySelectorAll("input,select").forEach(inp=>inp.oninput=updateRollCalc);
+  updateRollCalc();
+  o.classList.add("show");
+}
+function closeRoll(){const o=$("#rollModal");if(o)o.classList.remove("show");rollCtx=null;}
+const rollVal=sel=>{const el=$(sel);const v=el?parseFloat(el.value):NaN;return isFinite(v)?v:null;};
+/* per-share figures for the current modal state: what closing costs, what the new one brings in,
+   and the P/L locked in on the position being closed. nulls until the inputs are filled. */
+function rollFigures(){
+  if(!rollCtx)return null;
+  const qty=rollVal("#r-qty")||0,cfees=rollVal("#r-cfees")||0,ofees=rollVal("#r-ofees")||0;
+  if(rollCtx.kind==="trade"){
+    const t=rollCtx.t,short=t.action==="sell",mult=num(t.multiplier,100)||100;
+    const cl=rollVal("#r-close"),op=rollVal("#r-open");
+    const net=(cl==null||op==null)?null:(short?op-cl:cl-op);
+    // match what the FIFO matcher will realize: include the opening trade's own fees, prorated
+    const openFee=num(t.quantity)?num(t.fees)/num(t.quantity)*qty:num(t.fees);
+    const closedPl=cl==null?null:((short?num(t.price)-cl:cl-num(t.price))*qty*mult-cfees-openFee);
+    return {qty,mult,net,closedPl,cfees,ofees};
+  }
+  const sp=rollCtx.sp;
+  const cls_=sp.legs.map((l,i)=>rollVal(`.r-lclose[data-i="${i}"]`));
+  const ops=sp.legs.map((l,i)=>rollVal(`.r-lopen[data-i="${i}"]`));
+  const netClose=cls_.every(v=>v!=null)?sp.legs.reduce((a,l,i)=>a+(l.side==="short"?cls_[i]:-cls_[i]),0):null;
+  const netOpen=ops.every(v=>v!=null)?sp.legs.reduce((a,l,i)=>a+(l.side==="short"?ops[i]:-ops[i]),0):null;
+  const net=(netClose==null||netOpen==null)?null:netOpen-netClose;
+  const closedPl=netClose==null?null:((spreadNetOpen(sp)-netClose)*num(sp.quantity)*100-num(sp.fees)-cfees);
+  return {qty,mult:100,net,closedPl,cfees,ofees,closes:cls_,opens:ops};
+}
+function updateRollCalc(){
+  const f=rollFigures();const box=$("#rollCalc");if(!box)return;
+  if(!f){box.innerHTML="";return;}
+  let h="";
+  h+=`<span>Closing P/L: ${f.closedPl==null?'<b class="mut">—</b>':`<b class="${cls(f.closedPl)}">${fmtSignedColored(f.closedPl).replace("−","-")}</b>`}</span>`;
+  if(f.net==null)h+=`<span class="mut">enter close &amp; open prices for the roll credit</span>`;
+  else{const cash=f.net*f.qty*f.mult-f.ofees;
+    h+=`<span>Roll: <b class="${f.net>=0?'pos':'neg'}">${f.net>=0?"credit ":"debit "}${fmtMoney(Math.abs(f.net))}</b>/sh</span>`+
+       `<span>Net cash: <b class="${cls(cash)}">${fmtSignedColored(cash).replace("−","-")}</b></span>`;}
+  box.innerHTML=h;
+}
+function doRoll(){
+  if(!rollCtx)return;
+  const f=rollFigures();
+  const date=($("#r-date")||{}).value||today();
+  const exp=($("#r-exp")||{}).value||"";
+  if(!(f.qty>0)){toast("Quantity must be > 0",true);return;}
+  if(!exp){toast("Enter the new expiry",true);return;}
+  if(!futureDateOK(date))return;
+  if(rollCtx.kind==="trade"){
+    const t=state.trades.find(x=>x.id===rollCtx.id);if(!t){closeRoll();return;}
+    const cl=rollVal("#r-close"),op=rollVal("#r-open"),strike=rollVal("#r-strike");
+    if(cl==null){toast("Enter what you closed the current option for",true);return;}
+    if(op==null){toast("Enter the price of the new option",true);return;}
+    if(strike==null){toast("Enter the new strike",true);return;}
+    const mk=(o)=>({id:"t"+Date.now()+Math.random().toString(36).slice(2,6),_seq:state.seq++,
+      date,instrument:"option",symbol:t.symbol,account:t.account||"",
+      multiplier:num(t.multiplier,100)||100,quantity:f.qty,...o});
+    // close at the CURRENT contract's key so the matcher pairs it with the open lot
+    state.trades.push(mk({action:t.action==="sell"?"buy":"sell",price:cl,fees:f.cfees,
+      expiry:t.expiry||"",strike:num(t.strike),optionType:t.optionType||"call",rolledFrom:t.id}));
+    state.trades.push(mk({action:t.action,price:op,fees:f.ofees,
+      expiry:exp,strike:strike,optionType:($("#r-otype")||{}).value||t.optionType||"call",rolledFrom:t.id}));
+  }else{
+    const sp=state.spreads.find(x=>x.id===rollCtx.id);if(!sp){closeRoll();return;}
+    if(f.closes.some(v=>v==null)){toast("Enter a close price for every leg",true);return;}
+    if(f.opens.some(v=>v==null)){toast("Enter an open price for every new leg",true);return;}
+    const strikes=sp.legs.map((l,i)=>rollVal(`.r-lstrike[data-i="${i}"]`));
+    if(strikes.some(v=>v==null)){toast("Enter a strike for every new leg",true);return;}
+    const defs=sp.legs.map(l=>({side:l.side,optionType:l.optionType}));
+    sp.legs=sp.legs.map((l,i)=>({...l,close:f.closes[i]}));
+    sp.dateClosed=date;sp.fees=num(sp.fees)+f.cfees;sp.status="closed";
+    state.spreads.push({id:"sp"+Date.now()+Math.random().toString(36).slice(2,5),
+      type:sp.type,symbol:sp.symbol,account:sp.account||"",expiry:exp,quantity:f.qty,
+      dateOpened:date,dateClosed:"",fees:f.ofees,status:"open",rolledFrom:sp.id,
+      legs:defs.map((d,i)=>({side:d.side,optionType:d.optionType,strike:strikes[i],open:f.opens[i],close:null}))});
+  }
+  save();closeRoll();refreshAll();
+  toast(f.net!=null&&f.net<0?"Rolled for a debit":"Rolled");
 }
 
 /* ============================ PROP FIRM ============================ */
@@ -2791,6 +2996,8 @@ function switchView(v){
   document.querySelectorAll(".view").forEach(s=>s.classList.toggle("on",s.id==="view-"+v));
   if(v==="dash")renderDash();if(v==="trades")renderTrades();if(v==="positions")renderPositions();if(v==="spreads")renderSpreads();if(v==="prop")renderProp();
   if(v==="data")$("#countNote").textContent=`${state.trades.length} trades · ${state.spreads.length} sell-side · ${state.propfirm.length} prop firm · ${Object.keys(state.marks).length} marks stored`;
+  // pull underlying prices for the sell-side ITM colouring if any open symbol is unpriced
+  if((v==="spreads"||v==="positions")&&!fetchingPrices&&(state.spreads||[]).some(s=>s.status!=="closed"&&(s.symbol||"").trim()&&state.marks["STK:"+(s.symbol||"").toUpperCase().trim()]==null))fetchStockPrices(false);
 }
 function refreshAccounts(){const el=$("#acctList");if(!el)return;
   const accts=[...new Set([...state.trades,...state.spreads].map(x=>(x.account||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
@@ -2863,6 +3070,10 @@ function init(){
   $("#welcomeStart").onclick=closeWelcome;
   $("#welcomeDemo").onclick=()=>{closeWelcome();$("#demoToggle").checked=true;setDemo(true);switchView("dash");};
   $("#showWelcome").onclick=openWelcome;
+  $("#rollGo").onclick=doRoll;
+  $("#rollCancel").onclick=closeRoll;
+  $("#rollModal").addEventListener("click",e=>{if(e.target===$("#rollModal"))closeRoll();});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#rollModal").classList.contains("show"))closeRoll();});
   $("#welcomeModal").addEventListener("click",e=>{if(e.target===$("#welcomeModal"))closeWelcome();});
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#welcomeModal").classList.contains("show"))closeWelcome();});
   if(!welcomeSeen())openWelcome();
