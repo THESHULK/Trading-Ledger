@@ -380,6 +380,31 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .spreadcalc b{font-weight:700}
 .badge.spread{color:#ff9bd0;border-color:#73345a}
 .legsub{font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:2px}
+/* ---- journal ---- */
+.jtext{width:100%;min-height:150px;resize:vertical;background:var(--bg2);border:1px solid var(--line);
+  border-radius:10px;color:var(--txt);padding:11px 13px;outline:none;font:inherit;font-size:13.5px;
+  line-height:1.55;transition:border-color .15s;margin:12px 0 4px}
+.jtext:focus{border-color:var(--green-dim)}
+.modal.notem{max-width:620px}
+.modal.notem .jtext{min-height:190px}
+.jstats{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;color:var(--muted);
+  border:1px solid var(--line);border-radius:10px;padding:10px 13px;background:var(--bg2)}
+.jstats b{font-weight:700}
+.jfilter{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.jfilter input{flex:1 1 200px}
+.jentry{border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin-bottom:10px;background:var(--bg2)}
+.jentry:hover{border-color:var(--line2)}
+.jhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.jhead .jdate{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--txt)}
+.jhead .jpl{font-family:var(--mono);font-size:11.5px}
+.jhead .jbtns{margin-left:auto;display:flex;gap:6px}
+.jbody{font-size:13px;line-height:1.55;color:var(--muted);white-space:pre-wrap;word-break:break-word}
+.jtags{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.jtag{font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--faint);
+  border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+.iconbtn.note.has{border-color:var(--green-dim);color:var(--green)}
+.sd-pos .sd-note{margin-left:4px}
+.jempty{color:var(--faint);font-size:13px;padding:14px 2px}
 /* ---- roll modal ---- */
 .iconbtn.roll:hover{border-color:var(--green-dim);color:var(--green)}
 .modal.rollm{max-width:680px}
@@ -408,6 +433,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <button data-v="trades">Trades</button>
     <button data-v="positions">Positions</button>
     <button data-v="spreads">Sell Side</button>
+    <button data-v="journal">Journal</button>
     <button data-v="prop">Prop Firm</button>
     <button data-v="data">Data</button>
   </nav>
@@ -626,6 +652,32 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
   </section>
 
   <!-- PROP FIRM -->
+  <!-- JOURNAL -->
+  <section class="view" id="view-journal">
+    <div class="panel">
+      <h3>Daily Journal</h3>
+      <div class="form">
+        <div class="field"><label>Date</label><input type="date" id="j-date"></div>
+        <div class="field" style="flex:2"><label>Tags <span class="mut">(optional, comma separated)</span></label><input type="text" id="j-tags" placeholder="discipline, overtrading, patience"></div>
+      </div>
+      <div class="jstats" id="jDayStats"></div>
+      <textarea id="j-text" class="jtext" placeholder="How did the session go? What setups worked, what didn't, and what will you do differently next time?"></textarea>
+      <div class="row">
+        <button class="btn" id="jSave">Save Entry</button>
+        <button class="btn ghost" id="jDelete" style="display:none">Delete</button>
+        <span class="note" id="jStatus"></span>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>All Entries <span class="mut" id="jCount"></span></h3>
+      <div class="jfilter">
+        <input type="text" id="j-search" placeholder="search entries…">
+        <select id="j-kind"><option value="all">All entries</option><option value="day">Daily only</option><option value="trade">Trade notes only</option></select>
+      </div>
+      <div id="jList"></div>
+    </div>
+  </section>
+
   <section class="view" id="view-prop">
     <div class="panel">
       <h3>Prop Firm Fees &amp; Payouts</h3>
@@ -723,6 +775,19 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <div class="modal-btns">
       <button class="btn primary" id="welcomeStart">Get started</button>
       <button class="btn ghost" id="welcomeDemo">Show me with demo data</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="noteModal">
+  <div class="modal notem" role="dialog" aria-modal="true" aria-labelledby="noteTitle">
+    <h2 id="noteTitle">Trade note</h2>
+    <p class="lead" id="noteSub"></p>
+    <textarea id="noteText" class="jtext" placeholder="Why did you take this trade? How did you manage it? What would you do differently?"></textarea>
+    <div class="modal-btns">
+      <button class="btn primary" id="noteSave">Save note</button>
+      <button class="btn ghost" id="noteCancel">Cancel</button>
+      <button class="btn danger" id="noteDelete" style="display:none">Delete</button>
     </div>
   </div>
 </div>
@@ -864,13 +929,13 @@ function migrateFutures(){
 
 /* ============================ STATE ============================ */
 const LS_KEY="tape.v1";
-let state={trades:[],marks:{},spreads:[],propfirm:[],seq:0,updatedAt:0};
+let state={trades:[],marks:{},spreads:[],propfirm:[],notes:{},journal:{},seq:0,updatedAt:0};
 let demoMode=false,demoBackup=null;   // demo preview never persists to storage or Drive
 const FS_OK = typeof window.showSaveFilePicker==="function";
 let fileHandle=null, fileName="", fileConnected=false, fileWriteTimer=null;
 
 function serialize(){return JSON.stringify(state,null,2);}
-function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;migrateFutures();return true;}return false;}
+function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.notes=(p.notes&&typeof p.notes==="object")?p.notes:{};state.journal=(p.journal&&typeof p.journal==="object")?p.journal:{};state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;migrateFutures();return true;}return false;}
 
 function load(){try{const r=localStorage.getItem(LS_KEY);if(r)applyParsed(JSON.parse(r));}catch(e){}}
 function save(){
@@ -2088,6 +2153,7 @@ function tradeRowHtml(t,pl,isOpen){
     <td class="mut">${t.fees?fmtMoney(t.fees):"—"}</td>
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="open futures position — P/L is realized when you set an exit price">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-edit="${t.id}">edit</button>
+        ${noteBtn(t.id)}
         <button class="iconbtn del" data-del="${t.id}">del</button></td>
   </tr>`;}
   return `<tr${isOpen?' class="open-row"':''}>
@@ -2106,6 +2172,7 @@ function tradeRowHtml(t,pl,isOpen){
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="opening trade — P/L is realized when it is closed">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-edit="${t.id}">edit</button>
         ${t.instrument==="option"&&isOpen?`<button class="iconbtn roll" data-roll="${t.id}" title="Roll to a new strike / expiry">roll</button>`:""}
+        ${noteBtn(t.id)}
         <button class="iconbtn del" data-del="${t.id}">del</button></td>
   </tr>`;}
 function spreadRowHtml(s){
@@ -2127,6 +2194,7 @@ function spreadRowHtml(s){
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="open spread — P/L is realized when it is closed">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-sedit="${s.id}">edit ↗</button>
         ${closed?"":`<button class="iconbtn roll" data-sroll="${s.id}" title="Roll to a new strike / expiry">roll</button>`}
+        ${noteBtn(s.id)}
         <button class="iconbtn del" data-sdel="${s.id}">del</button></td>
   </tr>`;}
 function renderTrades(){
@@ -2172,6 +2240,7 @@ function renderTrades(){
     state.trades=state.trades.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadEdit(b.dataset.edit));
   t.querySelectorAll("[data-roll]").forEach(b=>b.onclick=()=>openRoll("trade",b.dataset.roll));
+  t.querySelectorAll("[data-note]").forEach(b=>b.onclick=()=>openNote(b.dataset.note));
   t.querySelectorAll("[data-sroll]").forEach(b=>b.onclick=()=>openRoll("spread",b.dataset.sroll));
   t.querySelectorAll("[data-sdel]").forEach(b=>b.onclick=()=>{
     const sp=state.spreads.find(x=>x.id===b.dataset.sdel);
@@ -2711,6 +2780,7 @@ function renderSellDash(){
       `<span class="legs${cls}"${note}>${legs}</span>`+
       `<span class="exp">${p.expiry||"—"} · ${fmtDte(daysToExp(p.expiry))}</span>`+
       `<span class="pm">QTY ${fmtNum(p.qty)} · ${money(p.prem)}</span>`+
+      noteBtn(p.id,"sd-note")+
       `<button class="iconbtn sd-roll" data-sroll="${attr(p.id)}" title="Roll to a new strike / expiry">roll</button>`+
       `<button class="iconbtn sd-edit" data-sedit="${attr(p.id)}" title="Edit this position">edit</button></div>`;
   }).join(""):`<div class="prow"><span class="ct">No open sell-side positions.</span></div>`;
@@ -2747,6 +2817,7 @@ function renderSellDash(){
   sdWireCharts();
   box.querySelectorAll(".sd-edit").forEach(btn=>btn.onclick=()=>loadSpreadEdit(btn.dataset.sedit));
   box.querySelectorAll(".sd-roll").forEach(btn=>btn.onclick=()=>openRoll("spread",btn.dataset.sroll));
+  box.querySelectorAll("[data-note]").forEach(btn=>btn.onclick=()=>openNote(btn.dataset.note));
 }
 function renderSpreads(){
   renderSellDash();
@@ -2792,12 +2863,14 @@ function renderSpreads(){
       <td class="${closed?cls(pnl):cls(un)}">${closed?fmtSignedColored(pnl).replace("−","-"):fmtSignedColored(un).replace("−","-")+'<div class="legsub">open</div>'}</td>
       <td><button class="iconbtn" data-edit="${s.id}">edit</button>
           ${closed?"":`<button class="iconbtn roll" data-sroll="${s.id}" title="Roll to a new strike / expiry">roll</button>`}
+          ${noteBtn(s.id)}
           <button class="iconbtn del" data-del="${s.id}">del</button></td>
     </tr>`;}).join("")+`</tbody>`;
   wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp","strike"]);
   t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{const sp=state.spreads.find(x=>x.id===b.dataset.del);if(!confirmDelete(sp?`this sell-side trade (${(sp.symbol||"?").toUpperCase()})`:"this sell-side trade"))return;state.spreads=state.spreads.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadSpreadEdit(b.dataset.edit));
   t.querySelectorAll("[data-sroll]").forEach(b=>b.onclick=()=>openRoll("spread",b.dataset.sroll));
+  t.querySelectorAll("[data-note]").forEach(b=>b.onclick=()=>openNote(b.dataset.note));
 }
 
 /* ============================ ROLL ============================ */
@@ -2945,6 +3018,133 @@ function doRoll(){
   toast(f.net!=null&&f.net<0?"Rolled for a debit":"Rolled");
 }
 
+/* ============================ JOURNAL ============================ */
+/* Two kinds of entry, both local-first and included in JSON export:
+   state.notes[id]      -> a note attached to one trade or sell-side position
+   state.journal[date]  -> the daily entry for YYYY-MM-DD                        */
+let noteCtx=null;
+function journalCount(){return Object.keys(state.notes||{}).length+Object.keys(state.journal||{}).length;}
+function noteOf(id){const n=(state.notes||{})[id];return n&&n.text?n:null;}
+function dayEntry(d){const e=(state.journal||{})[d];return e&&(e.text||(e.tags||[]).length)?e:null;}
+function noteBtn(id,cls){return `<button class="iconbtn note${noteOf(id)?" has":""}${cls?" "+cls:""}" data-note="${attr(id)}" `+
+  `title="${noteOf(id)?"Edit this trade's note":"Add a note to this trade"}">note</button>`;}
+// one-line description of whatever the note is attached to, shown in the modal header
+function noteSubject(id){
+  const t=(state.trades||[]).find(x=>x.id===id);
+  if(t)return `${t.date} · ${(t.symbol||"").toUpperCase()} ${t.instrument==="option"?`${t.expiry||""} ${fmtNum(t.strike)}${(t.optionType||"")[0]?.toUpperCase()||""} `:""}`+
+    `${(t.action||t.direction||"").toUpperCase()} ${fmtNum(t.quantity)}`;
+  const sp=(state.spreads||[]).find(x=>x.id===id);
+  if(sp)return `${sp.dateOpened||""} · ${(sp.symbol||"").toUpperCase()} ${sp.type||""} ${sp.legs.map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""}${fmtNum(l.strike)}`).join(" / ")}`;
+  return "";
+}
+function openNote(id){
+  const box=$("#noteModal");if(!box)return;
+  noteCtx=id;const n=noteOf(id);
+  $("#noteTitle").textContent=n?"Edit trade note":"Add trade note";
+  $("#noteSub").innerHTML=`<span class="rollcur">${esc(noteSubject(id))}</span>`;
+  $("#noteText").value=n?n.text:"";
+  $("#noteDelete").style.display=n?"":"none";
+  box.classList.add("show");
+  setTimeout(()=>{const t=$("#noteText");if(t)t.focus();},30);
+}
+function closeNote(){const b=$("#noteModal");if(b)b.classList.remove("show");noteCtx=null;}
+function saveNote(){
+  if(!noteCtx)return;
+  const txt=($("#noteText").value||"").trim();
+  state.notes=state.notes||{};
+  if(txt)state.notes[noteCtx]={text:txt,at:Date.now()};
+  else delete state.notes[noteCtx];
+  save();closeNote();refreshAll();toast(txt?"Note saved":"Note removed");
+}
+function deleteNote(){
+  if(!noteCtx)return;
+  if(!confirmDelete("this trade note"))return;
+  delete (state.notes||{})[noteCtx];
+  save();closeNote();refreshAll();toast("Note deleted");
+}
+/* ---- daily entries ---- */
+// realized P/L and trade count for one calendar day, across trades, spreads and prop firm
+function dayStats(d){
+  const {realized}=computePnl(expandTrades(state.trades));
+  let pl=0,n=0;
+  for(const r of realized)if(String(r.date).slice(0,10)===d){pl+=r.pnl;n++;}
+  for(const sp of (state.spreads||[]))if(sp.status==="closed"&&String(sp.dateClosed||"").slice(0,10)===d){pl+=spreadRealized(sp);n++;}
+  let opened=(state.trades||[]).filter(t=>String(t.date).slice(0,10)===d).length
+            +(state.spreads||[]).filter(x=>String(x.dateOpened||"").slice(0,10)===d).length;
+  let prop=0;for(const c of (state.propfirm||[]))if(String(c.date).slice(0,10)===d)prop+=num(c.amount);
+  return {pl:pl+prop,closed:n,opened};
+}
+function jSelectedDate(){return ($("#j-date")||{}).value||today();}
+function loadDayEntry(){
+  const d=jSelectedDate(),e=(state.journal||{})[d];
+  $("#j-text").value=e&&e.text?e.text:"";
+  $("#j-tags").value=e&&e.tags?e.tags.join(", "):"";
+  $("#jDelete").style.display=dayEntry(d)?"":"none";
+  $("#jStatus").textContent=e&&e.at?("last saved "+new Date(e.at).toLocaleString()):"";
+  const st=dayStats(d);
+  $("#jDayStats").innerHTML=
+    `<span>${d}</span>`+
+    `<span>Realized: <b class="${cls(st.pl)}">${fmtSignedColored(st.pl).replace("−","-")}</b></span>`+
+    `<span>Closed: <b>${st.closed}</b></span>`+
+    `<span>Opened: <b>${st.opened}</b></span>`;
+}
+function saveDayEntry(){
+  const d=jSelectedDate();
+  const txt=($("#j-text").value||"").trim();
+  const tags=($("#j-tags").value||"").split(",").map(x=>x.trim()).filter(Boolean);
+  state.journal=state.journal||{};
+  if(txt||tags.length)state.journal[d]={text:txt,tags,at:Date.now()};
+  else delete state.journal[d];
+  save();refreshAll();toast(txt||tags.length?"Journal entry saved":"Entry removed");
+}
+function deleteDayEntry(){
+  const d=jSelectedDate();
+  if(!dayEntry(d))return;
+  if(!confirmDelete(`the journal entry for ${d}`))return;
+  delete (state.journal||{})[d];
+  save();refreshAll();toast("Entry deleted");
+}
+// every entry of both kinds, newest first, for the list below the editor
+function journalEntries(){
+  const out=[];
+  for(const d of Object.keys(state.journal||{})){const e=state.journal[d];
+    if(e&&(e.text||(e.tags||[]).length))out.push({kind:"day",date:d,text:e.text||"",tags:e.tags||[],at:e.at||0});}
+  for(const id of Object.keys(state.notes||{})){const n=state.notes[id];if(!n||!n.text)continue;
+    const t=(state.trades||[]).find(x=>x.id===id),sp=t?null:(state.spreads||[]).find(x=>x.id===id);
+    if(!t&&!sp)continue;                                    // note whose trade was deleted
+    out.push({kind:"trade",id,date:t?t.date:(sp.dateOpened||sp.dateClosed||""),
+      subject:noteSubject(id),symbol:((t||sp).symbol||"").toUpperCase(),text:n.text,at:n.at||0});}
+  return out.sort((a,b)=>String(b.date).localeCompare(String(a.date))||(b.at-a.at));
+}
+function renderJournal(){
+  if(!$("#jList"))return;
+  if(!$("#j-date").value)$("#j-date").value=today();
+  loadDayEntry();
+  const q=(($("#j-search")||{}).value||"").toLowerCase().trim();
+  const kind=(($("#j-kind")||{}).value||"all");
+  let list=journalEntries();
+  if(kind!=="all")list=list.filter(e=>e.kind===kind);
+  if(q)list=list.filter(e=>(e.text+" "+(e.subject||"")+" "+(e.tags||[]).join(" ")).toLowerCase().includes(q));
+  $("#jCount").textContent=list.length?`· ${list.length}`:"";
+  $("#jList").innerHTML=list.length?list.map(e=>{
+    const pl=e.kind==="day"?dayStats(e.date).pl:null;
+    return `<div class="jentry">
+      <div class="jhead">
+        <span class="jdate">${e.date||"—"}</span>
+        <span class="badge ${e.kind==="day"?"stock":"spread"}">${e.kind==="day"?"daily":"trade"}</span>
+        ${e.kind==="trade"?`<span class="mut" style="font-size:11px">${esc(e.subject||"")}</span>`:
+          `<span class="jpl ${cls(pl)}">${fmtSignedColored(pl).replace("−","-")}</span>`}
+        <span class="jbtns"><button class="iconbtn" data-jedit="${attr(e.kind==="day"?e.date:e.id)}" data-jkind="${e.kind}">edit</button></span>
+      </div>
+      <div class="jbody">${esc(e.text)}</div>
+      ${(e.tags||[]).length?`<div class="jtags">${e.tags.map(t=>`<span class="jtag">${esc(t)}</span>`).join("")}</div>`:""}
+    </div>`;}).join(""):`<div class="jempty">${q||kind!=="all"?"No entries match.":"No journal entries yet — write about today above, or use the note button on any trade."}</div>`;
+  $("#jList").querySelectorAll("[data-jedit]").forEach(b=>b.onclick=()=>{
+    if(b.dataset.jkind==="day"){$("#j-date").value=b.dataset.jedit;loadDayEntry();scrollToForm("#j-date");$("#j-text").focus();}
+    else openNote(b.dataset.jedit);
+  });
+}
+
 /* ============================ PROP FIRM ============================ */
 let editPfId=null;
 function computeProp(list){let costs=0,payouts=0;for(const c of list){const a=num(c.amount);if(a<0)costs+=a;else payouts+=a;}return{costs,payouts,net:costs+payouts};}
@@ -3010,15 +3210,16 @@ function switchView(v){
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
   document.querySelectorAll(".view").forEach(s=>s.classList.toggle("on",s.id==="view-"+v));
   if(v==="dash")renderDash();if(v==="trades")renderTrades();if(v==="positions")renderPositions();if(v==="spreads")renderSpreads();if(v==="prop")renderProp();
-  if(v==="data")$("#countNote").textContent=`${state.trades.length} trades · ${state.spreads.length} sell-side · ${state.propfirm.length} prop firm · ${Object.keys(state.marks).length} marks stored`;
+  if(v==="journal")renderJournal();
+  if(v==="data")$("#countNote").textContent=`${state.trades.length} trades · ${state.spreads.length} sell-side · ${state.propfirm.length} prop firm · ${journalCount()} journal · ${Object.keys(state.marks).length} marks stored`;
   // pull underlying prices for the sell-side ITM colouring if any open symbol is unpriced
   if((v==="spreads"||v==="positions")&&!fetchingPrices&&(state.spreads||[]).some(s=>s.status!=="closed"&&(s.symbol||"").trim()&&state.marks["STK:"+(s.symbol||"").toUpperCase().trim()]==null))fetchStockPrices(false);
 }
 function refreshAccounts(){const el=$("#acctList");if(!el)return;
   const accts=[...new Set([...state.trades,...state.spreads].map(x=>(x.account||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
   el.innerHTML=accts.map(a=>`<option value="${attr(a)}">`).join("");}
-function refreshAll(){refreshAccounts();renderDash();renderTrades();renderPositions();renderSpreads();renderProp();
-  $("#countNote").textContent=`${state.trades.length} trades · ${state.spreads.length} sell-side · ${state.propfirm.length} prop firm · ${Object.keys(state.marks).length} marks stored`;}
+function refreshAll(){refreshAccounts();renderDash();renderTrades();renderPositions();renderSpreads();renderProp();renderJournal();
+  $("#countNote").textContent=`${state.trades.length} trades · ${state.spreads.length} sell-side · ${state.propfirm.length} prop firm · ${journalCount()} journal · ${Object.keys(state.marks).length} marks stored`;}
 
 function init(){
   load();
@@ -3088,6 +3289,17 @@ function init(){
   $("#welcomeStart").onclick=closeWelcome;
   $("#welcomeDemo").onclick=()=>{closeWelcome();$("#demoToggle").checked=true;setDemo(true);switchView("dash");};
   $("#showWelcome").onclick=openWelcome;
+  $("#noteSave").onclick=saveNote;
+  $("#noteCancel").onclick=closeNote;
+  $("#noteDelete").onclick=deleteNote;
+  $("#noteModal").addEventListener("click",e=>{if(e.target===$("#noteModal"))closeNote();});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#noteModal").classList.contains("show"))closeNote();});
+  $("#j-date").value=today();
+  $("#j-date").onchange=()=>{loadDayEntry();renderJournal();};
+  $("#jSave").onclick=saveDayEntry;
+  $("#jDelete").onclick=deleteDayEntry;
+  $("#j-search").oninput=renderJournal;
+  $("#j-kind").onchange=renderJournal;
   $("#rollGo").onclick=doRoll;
   $("#rollCancel").onclick=closeRoll;
   $("#rollModal").addEventListener("click",e=>{if(e.target===$("#rollModal"))closeRoll();});
