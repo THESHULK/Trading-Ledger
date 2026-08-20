@@ -162,6 +162,17 @@ select{cursor:pointer}
 .panel h3{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
   font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:10px}
 .panel h3 .hint{margin-left:auto;font-size:10px;letter-spacing:.04em;color:var(--faint);text-transform:none;font-family:var(--mono)}
+/* ---- collapsible sections ---- */
+.panel > h3.sech{cursor:pointer;user-select:none;margin:-4px -4px 4px;padding:4px;border-radius:8px;transition:color .15s}
+.panel > h3.sech:hover{color:var(--txt)}
+.panel > h3.sech:focus-visible{outline:2px solid var(--green-dim);outline-offset:2px}
+.secarrow{flex:0 0 auto;font-size:9px;line-height:1;color:var(--faint);transition:transform .18s ease;transform-origin:50% 50%}
+.panel > h3.sech:hover .secarrow{color:var(--green)}
+.panel.collapsed > h3 .secarrow{transform:rotate(-90deg)}
+.panel.collapsed > *:not(h3){display:none!important}
+.panel.collapsed{padding-bottom:14px}
+.panel.collapsed > h3{margin-bottom:0}
+.seccount{font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.04em;text-transform:none}
 .grid2{display:grid;grid-template-columns:1.4fr 1fr;gap:18px}
 @media(max-width:860px){.grid2{grid-template-columns:1fr}.brand small{display:none}}
 
@@ -3018,6 +3029,53 @@ function doRoll(){
   toast(f.net!=null&&f.net<0?"Rolled for a debit":"Rolled");
 }
 
+/* ==================== COLLAPSIBLE SECTIONS ==================== */
+/* Every .panel with its own <h3> becomes collapsible. The open/closed state is keyed by
+   view + heading slug and kept in localStorage, so it survives reloads and re-renders. */
+const SEC_LS="tape_collapsed";
+let collapsedSecs={};
+function loadCollapsed(){try{collapsedSecs=JSON.parse(localStorage.getItem(SEC_LS)||"{}")||{};}catch(e){collapsedSecs={};}}
+function saveCollapsed(){try{localStorage.setItem(SEC_LS,JSON.stringify(collapsedSecs));}catch(e){}}
+// key off the heading's own text only — hints, counters and inputs inside the header are
+// filled in at render time, so including them would change the key as the data changes
+function secKey(h3,viewId,i){
+  let t="";
+  for(const n of h3.childNodes)if(n.nodeType===3)t+=n.textContent;
+  const slug=t.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,44);
+  return viewId+":"+(slug||("panel-"+i));
+}
+const SEC_IGNORE="input,select,button,textarea,a,label";
+function setSecOpen(panel,open,persist){
+  const h3=[...panel.children].find(c=>c.tagName==="H3");if(!h3)return;
+  panel.classList.toggle("collapsed",!open);
+  h3.setAttribute("aria-expanded",open?"true":"false");
+  if(persist){const k=panel.dataset.sec;if(open)delete collapsedSecs[k];else collapsedSecs[k]=1;saveCollapsed();}
+}
+function initCollapsible(){
+  loadCollapsed();
+  document.querySelectorAll(".view").forEach(view=>{
+    [...view.querySelectorAll(".panel")].forEach((panel,i)=>{
+      const h3=[...panel.children].find(c=>c.tagName==="H3");
+      if(!h3||h3.classList.contains("sech"))return;
+      const key=secKey(h3,view.id,i);
+      panel.dataset.sec=key;
+      h3.classList.add("sech");
+      const arrow=document.createElement("span");
+      arrow.className="secarrow";arrow.setAttribute("aria-hidden","true");arrow.textContent="▼";
+      h3.insertBefore(arrow,h3.firstChild);
+      h3.setAttribute("role","button");h3.setAttribute("tabindex","0");
+      h3.title="Click to collapse / expand";
+      setSecOpen(panel,!collapsedSecs[key],false);
+      const toggle=()=>setSecOpen(panel,panel.classList.contains("collapsed"),true);
+      h3.addEventListener("click",e=>{if(e.target.closest(SEC_IGNORE))return;toggle();});
+      h3.addEventListener("keydown",e=>{
+        if(e.target.closest(SEC_IGNORE))return;
+        if(e.key==="Enter"||e.key===" "||e.key==="Spacebar"){e.preventDefault();toggle();}
+      });
+    });
+  });
+}
+
 /* ============================ JOURNAL ============================ */
 /* Two kinds of entry, both local-first and included in JSON export:
    state.notes[id]      -> a note attached to one trade or sell-side position
@@ -3294,6 +3352,7 @@ function init(){
   $("#noteDelete").onclick=deleteNote;
   $("#noteModal").addEventListener("click",e=>{if(e.target===$("#noteModal"))closeNote();});
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#noteModal").classList.contains("show"))closeNote();});
+  initCollapsible();
   $("#j-date").value=today();
   $("#j-date").onchange=()=>{loadDayEntry();renderJournal();};
   $("#jSave").onclick=saveDayEntry;
