@@ -1695,7 +1695,7 @@ function aiChatExtract(j){const c=j.choices&&j.choices[0];let t=c&&c.message&&c.
 // Provider registry. Each builds the request and extracts the reply; chat logic stays the same.
 const AI_PROVIDERS={
   gemini:{label:"Google Gemini · free",keyHost:"aistudio.google.com/apikey",keyUrl:"https://aistudio.google.com/apikey",
-    models:["gemini-2.5-flash","gemini-2.0-flash","gemini-2.5-flash-lite","gemini-flash-latest"],note:"Free tier, works great from the browser.",
+    models:["gemini-3.6-flash","gemini-flash-latest"],note:"Free tier, works great from the browser.",
     endpoint:(m,k)=>`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(k)}`,
     headers:()=>({"Content-Type":"application/json"}),
     body:(m,sys,hist)=>{const gc={temperature:0.5,maxOutputTokens:8192};if(/2\.5/.test(m))gc.thinkingConfig={thinkingBudget:2048};return {system_instruction:{parts:[{text:sys}]},contents:hist.map(x=>({role:x.role,parts:[{text:x.text}]})),generationConfig:gc};},
@@ -1729,7 +1729,10 @@ function aiKeyOf(p){try{return localStorage.getItem("ai_key_"+p)||"";}catch(e){r
 function aiSetKeyOf(p,k){try{if(k)localStorage.setItem("ai_key_"+p,k);else localStorage.removeItem("ai_key_"+p);}catch(e){}}
 function aiModelOf(p){try{return localStorage.getItem("ai_model_"+p)||"";}catch(e){return "";}}
 function aiSetModelOf(p,m){try{if(m)localStorage.setItem("ai_model_"+p,m);else localStorage.removeItem("ai_model_"+p);}catch(e){}}
-function aiModels(p){const o=aiModelOf(p);return o?[o]:AI_PROVIDERS[p].models.slice();}
+// your saved model is tried first, but keep the defaults behind it so a model that has been
+// retired or that your key can't reach falls back instead of failing outright
+function aiModels(p){const o=aiModelOf(p);const d=AI_PROVIDERS[p].models.slice();
+  return o?[o,...d.filter(m=>m!==o)]:d;}
 function aiUpdateUI(){
   if(!$("#aiInput"))return;
   const has=!!aiKeyOf(aiProv()),dis=!has||aiBusy;
@@ -2293,16 +2296,28 @@ async function shotPrepImage(f){
 async function aiVisionExtract(dataUrl,prompt){
   const prov=aiProv(),key=aiKeyOf(prov);
   if(!key)throw {msg:"Set up an AI key first (AI Trade Coach on the Dashboard)."};
-  const model=aiModels(prov)[0];
   const mm=/^data:([^;]+);base64,(.*)$/.exec(dataUrl||"");
   if(!mm)throw {msg:"Couldn't read that image."};
   const P=AI_PROVIDERS[prov];
-  const r=await fetch(P.endpoint(model,key),{method:"POST",headers:P.headers(key),body:JSON.stringify(shotVisionBody(prov,model,mm[1],mm[2],dataUrl,prompt))});
-  if(!r.ok){let detail="";try{detail=P.err(await r.json())||"";}catch(e){}throw {msg:`HTTP ${r.status}${detail?" — "+detail:""}`};}
-  const obj=parseLooseJson(P.extract(await r.json()));
-  if(!obj)throw {msg:"The model didn't return readable data — try a clearer screenshot."};
-  if(obj.error)throw {msg:obj.error};
-  return obj;
+  let last="";
+  // fall through the provider's model list like chat does, so a retired or
+  // unavailable model id doesn't fail the whole import
+  for(const model of aiModels(prov)){
+    let r;
+    try{r=await fetch(P.endpoint(model,key),{method:"POST",headers:P.headers(key),
+      body:JSON.stringify(shotVisionBody(prov,model,mm[1],mm[2],dataUrl,prompt))});}
+    catch(e){last="couldn't reach the AI service";continue;}
+    if(!r.ok){let detail="";try{detail=P.err(await r.json())||"";}catch(e){}
+      last=`HTTP ${r.status}${detail?" — "+detail:""}`;
+      if(r.status===404||r.status===400||r.status===403)continue;   // model gone / no access → try the next
+      throw {msg:last};                                             // quota, rate limit, server error → stop
+    }
+    const obj=parseLooseJson(P.extract(await r.json()));
+    if(!obj){last="The model didn't return readable data — try a clearer screenshot.";continue;}
+    if(obj.error)throw {msg:obj.error};
+    return obj;
+  }
+  throw {msg:last||"No usable model for this provider."};
 }
 // pick the spread type from the extracted legs (more reliable than asking the model to name it)
 function inferSpreadType(legs){
@@ -3017,6 +3032,9 @@ function init(){
   $("#clearDates").onclick=()=>{fromD=toD="";$("#fromDate").value="";$("#toDate").value="";renderDash();};
   // AI trade coach (multi-provider chat)
   try{const old=localStorage.getItem("ai_gemini_key");if(old&&!localStorage.getItem("ai_key_gemini"))localStorage.setItem("ai_key_gemini",old);}catch(e){}  // migrate single-provider key
+  // a pinned model id from an earlier version keeps 404ing (Google retired the 1.5/2.x flash ids) — drop it so the current default is used
+  try{const gone=/^gemini-(1\.5|2\.0|2\.5)[\w.-]*$/i;const m=(localStorage.getItem("ai_model_gemini")||"").trim();
+    if(m&&gone.test(m))localStorage.removeItem("ai_model_gemini");}catch(e){}
   $("#aiProvider").onchange=()=>{aiSetProv($("#aiProvider").value);aiEditing=false;aiSyncProvider();};
   $("#aiSaveKey").onclick=()=>{const p=aiProv(),k=$("#aiKey").value.trim();if(!k){toast("Paste a key first",true);return;}
     aiSetKeyOf(p,k);aiSetModelOf(p,$("#aiModel").value.trim());aiEditing=false;aiSyncProvider();$("#aiInput").focus();toast("Saved in this browser");};
