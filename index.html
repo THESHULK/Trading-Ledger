@@ -317,6 +317,13 @@ td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:center}
 tbody tr:hover{background:var(--panel2)}
 tbody tr:last-child td{border-bottom:0}
 /* still-open trades/positions: a left accent bar + faint tint so they stand out from closed rows */
+/* expired but still open — deliberately theme-independent so it always reads as a warning */
+.dte-exp{color:#ff4d4d;font-weight:700;font-family:var(--mono);font-size:10px;letter-spacing:.06em;
+  border:1px solid rgba(255,77,77,.45);border-radius:4px;padding:1px 5px;white-space:nowrap}
+tr.expired-row td{background:rgba(255,77,77,.10)!important}
+tr.expired-row:hover td{background:rgba(255,77,77,.17)!important}
+tr.expired-row td:first-child{box-shadow:inset 3px 0 0 #ff4d4d!important}
+.sd-pos .prow.expired{background:rgba(255,77,77,.08);box-shadow:inset 3px 0 0 #ff4d4d}
 tr.open-row td{background:color-mix(in srgb, var(--blue) 9%, transparent)}
 tr.open-row:hover td{background:color-mix(in srgb, var(--blue) 16%, transparent)}
 tr.open-row td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
@@ -1305,9 +1312,14 @@ function symLabel(t){if(t.instrument==="option")return `${t.symbol} ${t.expiry||
 /* ---- days to expiration (from today; null when no expiry) ---- */
 function daysToExp(expiry){if(!expiry)return null;const e=new Date(expiry+"T00:00:00");if(isNaN(e))return null;
   const n=new Date();const t=new Date(n.getFullYear(),n.getMonth(),n.getDate());return Math.round((e-t)/86400000);}
-function fmtDte(n){if(n==null)return '<span class="mut">—</span>';
-  if(n<0)return `<span class="mut" title="expired ${-n} day${-n===1?"":"s"} ago">exp</span>`;
+// `open` matters: a long-closed contract is expired too, but only a still-open one needs flagging
+function fmtDte(n,open){if(n==null)return '<span class="mut">—</span>';
+  if(n<0)return open
+    ? `<span class="dte-exp" title="expired ${-n} day${-n===1?"":"s"} ago and still open — close it or roll it">EXPIRED</span>`
+    : `<span class="mut" title="expired ${-n} day${-n===1?"":"s"} ago">exp</span>`;
   return `<span class="${n<=7?"neg":n<=21?"":"mut"}" title="${n} day${n===1?"":"s"} to expiration">${n}d</span>`;}
+// an options position whose expiry has passed while it is still marked open
+function expiredOpen(expiry,isOpen){if(!isOpen||!expiry)return false;const d=daysToExp(expiry);return d!=null&&d<0;}
 
 /* ============================ FILTERS ============================ */
 let instF="all",fromD="",toD="";
@@ -2202,13 +2214,14 @@ function tradeRowHtml(t,pl,isOpen){
         ${noteBtn(t.id)}
         <button class="iconbtn del" data-del="${t.id}">del</button></td>
   </tr>`;}
-  return `<tr${isOpen?' class="open-row"':''}>
+  const expOpen=t.instrument==="option"&&expiredOpen(t.expiry,isOpen);
+  return `<tr class="${isOpen?"open-row":""}${expOpen?" expired-row":""}">
     <td class="l">${t.date}</td>
     <td class="l"><span class="mut">—</span></td>
     <td class="l"><span class="badge ${t.instrument}">${t.instrument}</span></td>
     <td class="l">${t.symbol||""}</td>
     <td class="l">${t.account?t.account:'<span class="mut">—</span>'}</td>
-    <td>${t.instrument==="option"?fmtDte(daysToExp(t.expiry)):'<span class="mut">—</span>'}</td>
+    <td>${t.instrument==="option"?fmtDte(daysToExp(t.expiry),isOpen):'<span class="mut">—</span>'}</td>
     <td>${t.instrument==="option"&&t.expiry?t.expiry:'<span class="mut">—</span>'}</td>
     <td>${t.instrument==="option"&&t.strike!=null&&t.strike!==""?`${t.strike}${t.optionType?" "+t.optionType[0].toUpperCase():""}`:'<span class="mut">—</span>'}</td>
     <td class="l"><span class="badge ${t.action}">${t.action.toUpperCase()}</span></td>
@@ -2224,13 +2237,13 @@ function tradeRowHtml(t,pl,isOpen){
 function spreadRowHtml(s){
   const closed=s.status==="closed",netO=spreadNetOpen(s),pl=closed?spreadRealized(s):null;
   const legtxt=s.legs.map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""} ${fmtNum(l.strike)}`).join(" / ");
-  return `<tr${closed?'':' class="open-row"'}>
+  return `<tr class="${closed?"":"open-row"}${expiredOpen(s.expiry,!closed)?" expired-row":""}">
     <td class="l">${s.dateOpened||s.dateClosed||"—"}</td>
     <td class="l">${closed&&s.dateClosed?s.dateClosed:'<span class="mut">—</span>'}</td>
     <td class="l"><span class="badge spread">sell-side</span></td>
     <td class="l">${s.symbol||""}<div class="legsub">${legtxt}</div></td>
     <td class="l">${s.account?s.account:'<span class="mut">—</span>'}</td>
-    <td>${fmtDte(daysToExp(s.expiry))}</td>
+    <td>${fmtDte(daysToExp(s.expiry),!closed)}</td>
     <td>${s.expiry||'<span class="mut">—</span>'}</td>
     <td>${(s.legs||[]).map(l=>l.strike).join(" / ")||'<span class="mut">—</span>'}</td>
     <td class="l"><span class="badge spread">${s.type||"—"}</span></td>
@@ -2313,7 +2326,9 @@ function renderPositions(){
   const cols=[["symbol","Symbol","l"],["instrument","Type","l"],["direction","Dir","l"],["qty","Qty",""],["avgPrice","Avg Price",""],["mark","Mark",""],["unrealized","Unrealized",""]];
   const head=headFilter(cols,posSort,kinds,posFilters,distinct,false);
   if(pos.length===0){t.innerHTML=head+`<tbody><tr><td colspan="7"><div class="empty">no open positions match these filters</div></td></tr></tbody>`;wireTable("#posTable",posSort,posFilters,renderPositions,["symbol","instrument","direction"]);return;}
-  t.innerHTML=head+`<tbody>`+pos.map(p=>p.instrument==="sell-side"?`<tr>
+  const posExpired=p=>p.instrument==="sell-side"?expiredOpen(p._sp&&p._sp.expiry,true)
+    :(p.key||"").startsWith("OPT")?expiredOpen((p.key||"").split(":")[2],true):false;
+  t.innerHTML=head+`<tbody>`+pos.map(p=>p.instrument==="sell-side"?`<tr class="${posExpired(p)?"expired-row":""}">
     <td class="l">${p.symbol}<span class="mut" style="font-size:10px"> ${p._sp.type||""} ${(p._sp.legs||[]).map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""}${fmtNum(l.strike)}`).join(" / ")}${p._sp.expiry?" · "+p._sp.expiry:""}</span></td>
     <td class="l"><span class="badge spread">sell-side</span></td>
     <td class="l ${p.direction==="Credit"?"pos":"neg"}">${p.direction}</td>
@@ -2321,8 +2336,8 @@ function renderPositions(){
     <td>${fmtNum(p.avgPrice)}</td>
     <td class="mut">—</td>
     <td class="${cls(p.unrealized)}">${fmtSignedColored(p.unrealized).replace("−","-")}</td>
-  </tr>`:`<tr>
-    <td class="l">${p.symbol}${p.key.startsWith("OPT")?`<span class="mut" style="font-size:10px"> ${p.key.split(":").slice(2).join(" ")}</span>`:""}</td>
+  </tr>`:`<tr class="${posExpired(p)?"expired-row":""}">
+    <td class="l">${p.symbol}${p.key.startsWith("OPT")?`<span class="mut" style="font-size:10px"> ${p.key.split(":").slice(2).join(" ")}</span>`:""}${posExpired(p)?' <span class="dte-exp">EXPIRED</span>':""}</td>
     <td class="l"><span class="badge ${p.instrument}">${p.instrument}</span></td>
     <td class="l ${p.direction==="Long"?"pos":"neg"}">${p.direction}</td>
     <td>${fmtNum(p.qty)}</td>
@@ -2828,9 +2843,10 @@ function renderSellDash(){
       if(trig){const inM=pastStrike(trig,spot);const good=credit?!inM:inM;cls=good?" good":" bad";
         note=` title="underlying ${fmtNum(spot)} · ${inM?"in the money":"out of the money"}"`;}}
     const legs=(p.legs||[]).map(l=>`<span class="leg">${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""} ${fmtNum(l.strike)}</span>`).join(" / ");
-    return `<div class="prow">`+
+    const expOpen=expiredOpen(p.expiry,true);
+    return `<div class="prow${expOpen?" expired":""}">`+
       `<div class="pmain"><span class="sym">${p.sym}</span><span class="legs${cls}"${note}>${legs}</span></div>`+
-      `<div class="pmeta"><span class="ptype">${typeName(p.type)}</span><span class="exp">${p.expiry||"—"} · ${fmtDte(daysToExp(p.expiry))}</span></div>`+
+      `<div class="pmeta"><span class="ptype">${typeName(p.type)}</span><span class="exp">${p.expiry||"—"} · ${fmtDte(daysToExp(p.expiry),true)}</span></div>`+
       `<div class="pfoot"><span class="pm">QTY ${fmtNum(p.qty)} · ${money(p.prem)}</span><span class="pacts">`+
       noteBtn(p.id,"sd-note")+
       `<button class="iconbtn sd-roll" data-sroll="${attr(p.id)}" title="Roll to a new strike / expiry">roll</button>`+
@@ -2875,7 +2891,7 @@ function renderSellDash(){
     </div>
     </div></div>
     <div class="sd-group" data-sdsec="04">
-    <div class="sd-sec"><span class="hash">§ 04</span><b>ACTIVE POSITIONS</b><span class="mut sdcount">${d.posRows.length}</span><span class="secarrow" aria-hidden="true">▼</span></div>
+    <div class="sd-sec"><span class="hash">§ 04</span><b>ACTIVE POSITIONS</b><span class="mut sdcount">${d.posRows.length}</span>${(()=>{const n=d.posRows.filter(x=>expiredOpen(x.expiry,true)).length;return n?`<span class="dte-exp">${n} EXPIRED</span>`:"";})()}<span class="secarrow" aria-hidden="true">▼</span></div>
     <div class="sd-body">
     <div class="sd-pos">${posHtml}</div>
     </div></div>
@@ -2928,13 +2944,13 @@ function renderSpreads(){
   t.innerHTML=head+`<tbody>`+rows.map(s=>{
     const netO=spreadNetOpen(s),netC=spreadNetClose(s),closed=s.status==="closed",pnl=closed?spreadRealized(s):null,un=netO*num(s.quantity)*100-num(s.fees);
     const legtxt=s.legs.map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0].toUpperCase()} ${fmtNum(l.strike)}`).join(" / ");
-    return `<tr${closed?'':' class="open-row"'}>
+    return `<tr class="${closed?"":"open-row"}${expiredOpen(s.expiry,!closed)?" expired-row":""}">
       <td class="l">${s.dateOpened||"—"}</td>
       <td class="l">${closed&&s.dateClosed?s.dateClosed:'<span class="mut">—</span>'}</td>
       <td class="l"><span class="badge spread">${s.type}</span></td>
       <td class="l">${s.symbol}<div class="legsub">${legtxt}</div></td>
       <td class="l">${s.account?s.account:'<span class="mut">—</span>'}</td>
-      <td class="l">${s.expiry||"—"}</td>
+      <td class="l">${s.expiry||"—"}${expiredOpen(s.expiry,!closed)?' <span class="dte-exp">EXPIRED</span>':""}</td>
       <td>${(s.legs||[]).map(l=>l.strike).join(" / ")||'<span class="mut">—</span>'}</td>
       <td>${fmtNum(s.quantity)}</td>
       <td class="${netO>=0?'pos':'neg'}">${netO>=0?"cr ":"db "}${fmtMoney(Math.abs(netO))}</td>
