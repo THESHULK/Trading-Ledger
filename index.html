@@ -188,9 +188,17 @@ svg.chart{width:100%;display:block;overflow:visible}
 .ticker-lookup::placeholder{color:var(--faint);text-transform:none}
 /* ---- sell-side income dashboard ---- */
 .sd{font-family:var(--mono);margin-bottom:18px;position:relative}
-.sd .sd-sec{color:var(--muted);font-size:11px;letter-spacing:.08em;margin:20px 2px 10px;font-weight:600}
+.sd .sd-sec{color:var(--muted);font-size:11px;letter-spacing:.08em;margin:20px 0 10px;font-weight:600;
+  display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;padding:4px 4px;border-radius:8px;transition:color .15s}
+.sd .sd-sec:hover b{color:var(--green)}
+.sd .sd-sec:focus-visible{outline:2px solid var(--green-dim);outline-offset:2px}
 .sd .sd-sec b{color:var(--txt)}
-.sd .sd-sec .hash{color:var(--faint);margin-right:8px}
+.sd .sd-sec .hash{color:var(--faint)}
+.sd .sd-sec .sdcount{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.sd .sd-sec .secarrow{margin-left:auto}
+.sd .sd-group:first-of-type .sd-sec{margin-top:2px}
+.sd .sd-group.collapsed .sd-sec .secarrow{transform:rotate(-90deg)}
+.sd .sd-group.collapsed .sd-body{display:none}
 .sd-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
 .sd-tile{padding:16px 18px;border-right:1px solid var(--line)}
 .sd-tile:last-child{border-right:0}
@@ -216,17 +224,28 @@ svg.chart{width:100%;display:block;overflow:visible}
 .sd-cell .big{font-size:18px;font-weight:700;color:var(--txt);margin-top:4px}
 .sd-cell .sub{color:var(--faint);font-size:10px;margin-top:2px}
 .sd-pos{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
-.sd-pos .prow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:11px 16px;border-top:1px solid var(--line);font-size:12.5px}
+.sd-pos .prow{display:flex;align-items:center;gap:8px 16px;padding:11px 16px;border-top:1px solid var(--line);font-size:12.5px;flex-wrap:wrap}
 .sd-pos .prow:first-child{border-top:0}
-.sd-pos .sym{font-weight:700;color:var(--txt);min-width:48px}
+.sd-pos .pmain,.sd-pos .pmeta,.sd-pos .pfoot{display:flex;align-items:center;gap:10px;min-width:0}
+.sd-pos .pfoot{margin-left:auto;gap:14px}
+.sd-pos .pacts{display:flex;gap:6px;flex:0 0 auto}
+.sd-pos .sym{font-weight:700;color:var(--txt)}
 .sd-pos .ct{color:var(--muted)}
-.sd-pos .ptype{color:var(--muted);font-size:11px}
-.sd-pos .legs{color:var(--txt);letter-spacing:.02em}
+.sd-pos .ptype{color:var(--muted);font-size:11px;white-space:nowrap}
+.sd-pos .legs{color:var(--txt);letter-spacing:.02em;white-space:nowrap}
 .sd-pos .legs.good{color:#22c55e;font-weight:700}
 .sd-pos .legs.bad{color:#ff4d4d;font-weight:700}
-.sd-pos .exp{color:var(--faint);font-size:11px}
-.sd-pos .pm{color:var(--green);margin-left:auto}
-.sd-pos .sd-edit{margin-left:4px}
+.sd-pos .exp{color:var(--faint);font-size:11px;white-space:nowrap}
+.sd-pos .pm{color:var(--green);white-space:nowrap}
+/* mobile: three calm lines per position instead of one wrapping jumble */
+@media(max-width:680px){
+  .sd-pos .prow{flex-direction:column;align-items:stretch;gap:7px;padding:13px 14px}
+  .sd-pos .pmain{justify-content:space-between;gap:12px}
+  .sd-pos .pmeta{justify-content:space-between;gap:12px;font-size:11px}
+  .sd-pos .pfoot{margin-left:0;justify-content:space-between;gap:12px}
+  .sd-pos .prow .iconbtn{padding:6px 13px;font-size:11.5px}
+  .sd-pos .pacts{gap:7px}
+}
 .demoswitch{display:inline-flex;align-items:center;gap:9px;font-size:14px;font-weight:600;cursor:pointer;margin-top:10px;color:var(--txt)}
 .demoswitch input{width:18px;height:18px;accent-color:var(--green);cursor:pointer}
 .ai-provider-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px}
@@ -2809,23 +2828,29 @@ function renderSellDash(){
       if(trig){const inM=pastStrike(trig,spot);const good=credit?!inM:inM;cls=good?" good":" bad";
         note=` title="underlying ${fmtNum(spot)} · ${inM?"in the money":"out of the money"}"`;}}
     const legs=(p.legs||[]).map(l=>`<span class="leg">${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""} ${fmtNum(l.strike)}</span>`).join(" / ");
-    return `<div class="prow"><span class="sym">${p.sym}</span>`+
-      `<span class="ptype">${typeName(p.type)}</span>`+
-      `<span class="legs${cls}"${note}>${legs}</span>`+
-      `<span class="exp">${p.expiry||"—"} · ${fmtDte(daysToExp(p.expiry))}</span>`+
-      `<span class="pm">QTY ${fmtNum(p.qty)} · ${money(p.prem)}</span>`+
+    return `<div class="prow">`+
+      `<div class="pmain"><span class="sym">${p.sym}</span><span class="legs${cls}"${note}>${legs}</span></div>`+
+      `<div class="pmeta"><span class="ptype">${typeName(p.type)}</span><span class="exp">${p.expiry||"—"} · ${fmtDte(daysToExp(p.expiry))}</span></div>`+
+      `<div class="pfoot"><span class="pm">QTY ${fmtNum(p.qty)} · ${money(p.prem)}</span><span class="pacts">`+
       noteBtn(p.id,"sd-note")+
       `<button class="iconbtn sd-roll" data-sroll="${attr(p.id)}" title="Roll to a new strike / expiry">roll</button>`+
-      `<button class="iconbtn sd-edit" data-sedit="${attr(p.id)}" title="Edit this position">edit</button></div>`;
+      `<button class="iconbtn sd-edit" data-sedit="${attr(p.id)}" title="Edit this position">edit</button>`+
+      `</span></div></div>`;
   }).join(""):`<div class="prow"><span class="ct">No open sell-side positions.</span></div>`;
   box.innerHTML=`<div class="sd">
     <div class="tip" id="sdTip"></div>
+    <div class="sd-group" data-sdsec="01">
+    <div class="sd-sec"><span class="hash">§ 01</span><b>SUMMARY</b><span class="secarrow" aria-hidden="true">▼</span></div>
+    <div class="sd-body">
     <div class="sd-tiles">
       <div class="sd-tile"><div class="lbl">Realized P/L</div><div class="big ${cls(d.realized)}">${fmtSignedColored(d.realized).replace("−","-")}</div><div class="mo">${moTag(d.realizedMo)}</div></div>
       <div class="sd-tile"><div class="lbl">Open premium</div><div class="big ${cls(d.openPrem)}">${fmtSignedColored(d.openPrem).replace("−","-")}</div><div class="mo"><span class="mut">${d.openCount} open · unrealized</span></div></div>
       <div class="sd-tile"><div class="lbl">Avg monthly P/L</div><div class="big ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</div><div class="mo"><span class="mut">over ${d.monthsCount} mo</span></div></div>
     </div>
-    <div class="sd-sec"><span class="hash">§ 02</span><b>PERFORMANCE</b></div>
+    </div></div>
+    <div class="sd-group" data-sdsec="02">
+    <div class="sd-sec"><span class="hash">§ 02</span><b>PERFORMANCE</b><span class="secarrow" aria-hidden="true">▼</span></div>
+    <div class="sd-body">
     <div class="sd-charts">
       <div class="sd-box"><div class="bh"><span>Net credit collected / mo</span></div>
         <div class="bv"><span class="l">${money(d.avgCollected)}</span></div>
@@ -2836,7 +2861,10 @@ function renderSellDash(){
         <div class="bsub"><span>avg/mo</span></div>
         ${sdBarChart(d.realByMo,"no closed trades")}</div>
     </div>
-    <div class="sd-sec"><span class="hash">§ 03</span><b>PORTFOLIO INSIGHTS</b></div>
+    </div></div>
+    <div class="sd-group" data-sdsec="03">
+    <div class="sd-sec"><span class="hash">§ 03</span><b>PORTFOLIO INSIGHTS</b><span class="secarrow" aria-hidden="true">▼</span></div>
+    <div class="sd-body">
     <div class="sd-insights">
       <div class="sd-cell"><div class="lbl">Trades all-time</div><div class="big">${d.tradesAll}</div><div class="sub">${d.ccN} CC / ${d.cspN} CSP</div></div>
       <div class="sd-cell"><div class="lbl">Avg monthly P/L</div><div class="big ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</div><div class="sub">realized / month</div></div>
@@ -2845,10 +2873,27 @@ function renderSellDash(){
       <div class="sd-cell"><div class="lbl">Best / worst trade</div><div class="big">${d.best?fmtSignedColored(d.best.r).replace("−","-"):"—"} / ${d.worst?fmtSignedColored(d.worst.r).replace("−","-"):"—"}</div><div class="sub">${d.best?(d.best.s.symbol||"?").toUpperCase():"—"} / ${d.worst?(d.worst.s.symbol||"?").toUpperCase():"—"}</div></div>
       <div class="sd-cell"><div class="lbl">Most traded</div><div class="big">${d.mostSym}</div><div class="sub">${d.mostN} positions</div></div>
     </div>
-    <div class="sd-sec"><span class="hash">§ 04</span><b>ACTIVE POSITIONS</b></div>
+    </div></div>
+    <div class="sd-group" data-sdsec="04">
+    <div class="sd-sec"><span class="hash">§ 04</span><b>ACTIVE POSITIONS</b><span class="mut sdcount">${d.posRows.length}</span><span class="secarrow" aria-hidden="true">▼</span></div>
+    <div class="sd-body">
     <div class="sd-pos">${posHtml}</div>
+    </div></div>
   </div>`;
   sdWireCharts();
+  loadCollapsed();
+  box.querySelectorAll(".sd-group").forEach(g=>{
+    const key="sellside:"+g.dataset.sdsec,head=g.querySelector(".sd-sec");
+    if(!head)return;
+    const apply=c=>{g.classList.toggle("collapsed",c);head.setAttribute("aria-expanded",c?"false":"true");};
+    apply(!!collapsedSecs[key]);
+    head.setAttribute("role","button");head.setAttribute("tabindex","0");
+    head.title="Click to collapse / expand";
+    const toggle=()=>{const c=!g.classList.contains("collapsed");apply(c);
+      if(c)collapsedSecs[key]=1;else delete collapsedSecs[key];saveCollapsed();};
+    head.addEventListener("click",toggle);
+    head.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "||e.key==="Spacebar"){e.preventDefault();toggle();}});
+  });
   box.querySelectorAll(".sd-edit").forEach(btn=>btn.onclick=()=>loadSpreadEdit(btn.dataset.sedit));
   box.querySelectorAll(".sd-roll").forEach(btn=>btn.onclick=()=>openRoll("spread",btn.dataset.sroll));
   box.querySelectorAll("[data-note]").forEach(btn=>btn.onclick=()=>openNote(btn.dataset.note));
@@ -3056,8 +3101,9 @@ function doRoll(){
 /* Every .panel with its own <h3> becomes collapsible. The open/closed state is keyed by
    view + heading slug and kept in localStorage, so it survives reloads and re-renders. */
 const SEC_LS="tape_collapsed";
-let collapsedSecs={};
-function loadCollapsed(){try{collapsedSecs=JSON.parse(localStorage.getItem(SEC_LS)||"{}")||{};}catch(e){collapsedSecs={};}}
+let collapsedSecs={},collapsedLoaded=false;
+function loadCollapsed(){if(collapsedLoaded)return;collapsedLoaded=true;
+  try{collapsedSecs=JSON.parse(localStorage.getItem(SEC_LS)||"{}")||{};}catch(e){collapsedSecs={};}}
 function saveCollapsed(){try{localStorage.setItem(SEC_LS,JSON.stringify(collapsedSecs));}catch(e){}}
 // key off the heading's own text only — hints, counters and inputs inside the header are
 // filled in at render time, so including them would change the key as the data changes
