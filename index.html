@@ -442,6 +442,34 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .iconbtn.note.has{border-color:var(--green-dim);color:var(--green)}
 .sd-pos .sd-note{margin-left:4px}
 .jempty{color:var(--faint);font-size:13px;padding:14px 2px}
+/* ---- journal calendar ---- */
+.jc-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.jc-head b{font-family:var(--mono);font-size:13px;color:var(--txt);min-width:150px;text-align:center}
+.jc-sum{display:flex;gap:14px;flex-wrap:wrap;margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint)}
+.jc-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.jc-wd{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:var(--faint);text-align:center;padding-bottom:3px}
+.jc-cell{position:relative;min-height:56px;border:1px solid var(--line);border-radius:9px;background:var(--bg2);
+  display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:6px 7px;cursor:pointer;
+  font:inherit;color:var(--txt);text-align:left;transition:border-color .13s,background .13s}
+.jc-cell:hover{border-color:var(--line2)}
+.jc-cell.blank{background:transparent;border-color:transparent;cursor:default;min-height:0}
+.jc-d{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.jc-pl{font-family:var(--mono);font-size:10.5px;font-weight:700}
+.jc-cell.win{background:rgba(34,197,94,.10);border-color:rgba(34,197,94,.28)}
+.jc-cell.win .jc-pl{color:#22c55e}
+.jc-cell.loss{background:rgba(255,77,77,.10);border-color:rgba(255,77,77,.28)}
+.jc-cell.loss .jc-pl{color:#ff4d4d}
+.jc-cell.today .jc-d{color:var(--txt);font-weight:700}
+.jc-cell.today{border-color:var(--blue)}
+.jc-cell.sel{outline:2px solid var(--green);outline-offset:-2px}
+.jc-dot{position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--green)}
+@media(max-width:560px){
+  .jc-cell{min-height:46px;padding:5px 4px;border-radius:7px}
+  .jc-pl{font-size:9px}
+  .jc-grid{gap:3px}
+  .jc-head b{min-width:0;flex:1}
+  .jc-sum{margin-left:0;width:100%;gap:12px}
+}
 .ai-chatsel{background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--muted);
   padding:4px 8px;font-size:11px;font-family:var(--mono);max-width:230px}
 .ai-chatsel:disabled{opacity:.5}
@@ -700,6 +728,18 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
   <!-- PROP FIRM -->
   <!-- JOURNAL -->
   <section class="view" id="view-journal">
+    <div class="panel">
+      <h3>Calendar</h3>
+      <div class="jc-head">
+        <button class="iconbtn" id="jcPrev" aria-label="Previous month">‹</button>
+        <b id="jcTitle"></b>
+        <button class="iconbtn" id="jcNext" aria-label="Next month">›</button>
+        <button class="iconbtn" id="jcToday">today</button>
+        <span class="jc-sum" id="jcSummary"></span>
+      </div>
+      <div id="jCal"></div>
+      <p class="note">Click a day to write or read its entry. A dot marks a day you journalled; green and red show that day's realized P/L.</p>
+    </div>
     <div class="panel">
       <h3>Daily Journal</h3>
       <div class="form">
@@ -3302,15 +3342,69 @@ function deleteNote(){
 }
 /* ---- daily entries ---- */
 // realized P/L and trade count for one calendar day, across trades, spreads and prop firm
-function dayStats(d){
+// every day's realized P/L, closes and opens in a single pass — the calendar needs a whole
+// month at once, and recomputing the ledger per day would be quadratic
+let dayMapCache=null;
+function invalidateDayMap(){dayMapCache=null;}
+function journalDayMap(){
+  if(dayMapCache)return dayMapCache;
+  const map={},get=d=>map[d]||(map[d]={pl:0,closed:0,opened:0});
   const {realized}=computePnl(expandTrades(state.trades));
-  let pl=0,n=0;
-  for(const r of realized)if(String(r.date).slice(0,10)===d){pl+=r.pnl;n++;}
-  for(const sp of (state.spreads||[]))if(sp.status==="closed"&&String(sp.dateClosed||"").slice(0,10)===d){pl+=spreadRealized(sp);n++;}
-  let opened=(state.trades||[]).filter(t=>String(t.date).slice(0,10)===d).length
-            +(state.spreads||[]).filter(x=>String(x.dateOpened||"").slice(0,10)===d).length;
-  let prop=0;for(const c of (state.propfirm||[]))if(String(c.date).slice(0,10)===d)prop+=num(c.amount);
-  return {pl:pl+prop,closed:n,opened};
+  for(const r of realized){const d=String(r.date).slice(0,10);if(d){const m=get(d);m.pl+=r.pnl;m.closed++;}}
+  for(const t of (state.trades||[])){const d=String(t.date).slice(0,10);if(d)get(d).opened++;}
+  for(const sp of (state.spreads||[])){
+    const od=String(sp.dateOpened||"").slice(0,10);if(od)get(od).opened++;
+    if(sp.status==="closed"){const cd=String(sp.dateClosed||"").slice(0,10);
+      if(cd){const m=get(cd);m.pl+=spreadRealized(sp);m.closed++;}}
+  }
+  for(const c of (state.propfirm||[])){const d=String(c.date).slice(0,10);if(d)get(d).pl+=num(c.amount);}
+  return (dayMapCache=map);
+}
+function dayStats(d){return journalDayMap()[d]||{pl:0,closed:0,opened:0};}
+/* ---- month calendar ---- */
+const JC_WD=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+let jcalMonth=null;   // "YYYY-MM"; null follows the selected date
+function jcalYM(){return jcalMonth||jSelectedDate().slice(0,7);}
+function jcalShift(n){
+  const [y,m]=jcalYM().split("-").map(Number);
+  const d=new Date(y,m-1+n,1);
+  jcalMonth=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+  renderJCal();
+}
+function renderJCal(){
+  const box=$("#jCal");if(!box)return;
+  const ym=jcalYM(),[y,m]=ym.split("-").map(Number);
+  const first=new Date(y,m-1,1),days=new Date(y,m,0).getDate(),lead=first.getDay();
+  const map=journalDayMap(),sel=jSelectedDate(),tod=today();
+  let cells="",moPl=0,moEntries=0,moClosed=0;
+  for(let i=0;i<lead;i++)cells+=`<div class="jc-cell blank"></div>`;
+  for(let d=1;d<=days;d++){
+    const ds=`${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    const st=map[ds]||{pl:0,closed:0,opened:0},has=!!dayEntry(ds);
+    moPl+=st.pl;moClosed+=st.closed;if(has)moEntries++;
+    const c=["jc-cell"];
+    if(ds===sel)c.push("sel");
+    if(ds===tod)c.push("today");
+    if(has)c.push("has");
+    if(st.closed||st.pl){c.push(st.pl>=0?"win":"loss");}
+    const bits=[ds];
+    if(st.closed)bits.push(`${st.closed} closed · ${fmtMoney(st.pl)}`);
+    if(st.opened)bits.push(`${st.opened} opened`);
+    if(has)bits.push("has a journal entry");
+    cells+=`<button type="button" class="${c.join(" ")}" data-jday="${ds}" title="${attr(bits.join(" · "))}">`+
+      `<span class="jc-d">${d}</span>`+
+      `${(st.closed||st.pl)?`<span class="jc-pl">${shortMoney(st.pl)}</span>`:""}`+
+      `${has?`<span class="jc-dot" aria-hidden="true"></span>`:""}</button>`;
+  }
+  box.innerHTML=`<div class="jc-grid">${JC_WD.map(w=>`<div class="jc-wd">${w}</div>`).join("")}${cells}</div>`;
+  $("#jcTitle").textContent=first.toLocaleDateString(undefined,{month:"long",year:"numeric"});
+  $("#jcSummary").innerHTML=`<span>${moEntries} ${moEntries===1?"entry":"entries"}</span>`+
+    `<span>${moClosed} closed</span>`+
+    `<span>P/L <b class="${cls(moPl)}">${fmtSignedColored(moPl).replace("−","-")}</b></span>`;
+  box.querySelectorAll("[data-jday]").forEach(b=>b.onclick=()=>{
+    $("#j-date").value=b.dataset.jday;jcalMonth=b.dataset.jday.slice(0,7);
+    loadDayEntry();renderJournal();$("#j-text").focus();
+  });
 }
 function jSelectedDate(){return ($("#j-date")||{}).value||today();}
 function loadDayEntry(){
@@ -3357,7 +3451,7 @@ function journalEntries(){
 function renderJournal(){
   if(!$("#jList"))return;
   if(!$("#j-date").value)$("#j-date").value=today();
-  loadDayEntry();
+  loadDayEntry();renderJCal();
   const q=(($("#j-search")||{}).value||"").toLowerCase().trim();
   const kind=(($("#j-kind")||{}).value||"all");
   let list=journalEntries();
@@ -3456,7 +3550,7 @@ function switchView(v){
 function refreshAccounts(){const el=$("#acctList");if(!el)return;
   const accts=[...new Set([...state.trades,...state.spreads].map(x=>(x.account||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
   el.innerHTML=accts.map(a=>`<option value="${attr(a)}">`).join("");}
-function refreshAll(){refreshAccounts();renderDash();renderTrades();renderPositions();renderSpreads();renderProp();renderJournal();
+function refreshAll(){invalidateDayMap();refreshAccounts();renderDash();renderTrades();renderPositions();renderSpreads();renderProp();renderJournal();
   $("#countNote").textContent=`${state.trades.length} trades · ${state.spreads.length} sell-side · ${state.propfirm.length} prop firm · ${journalCount()} journal · ${Object.keys(state.marks).length} marks stored`;}
 
 function init(){
@@ -3540,7 +3634,10 @@ function init(){
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#noteModal").classList.contains("show"))closeNote();});
   initCollapsible();
   $("#j-date").value=today();
-  $("#j-date").onchange=()=>{loadDayEntry();renderJournal();};
+  $("#j-date").onchange=()=>{jcalMonth=jSelectedDate().slice(0,7);loadDayEntry();renderJournal();};
+  $("#jcPrev").onclick=()=>jcalShift(-1);
+  $("#jcNext").onclick=()=>jcalShift(1);
+  $("#jcToday").onclick=()=>{$("#j-date").value=today();jcalMonth=null;loadDayEntry();renderJournal();};
   $("#jSave").onclick=saveDayEntry;
   $("#jDelete").onclick=deleteDayEntry;
   $("#j-search").oninput=renderJournal;
