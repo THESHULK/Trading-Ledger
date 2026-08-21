@@ -442,6 +442,12 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .iconbtn.note.has{border-color:var(--green-dim);color:var(--green)}
 .sd-pos .sd-note{margin-left:4px}
 .jempty{color:var(--faint);font-size:13px;padding:14px 2px}
+.ai-chatsel{background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--muted);
+  padding:4px 8px;font-size:11px;font-family:var(--mono);max-width:230px}
+.ai-chatsel:disabled{opacity:.5}
+.ai-mem{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--faint);
+  font-family:var(--mono);cursor:pointer;user-select:none}
+.ai-mem input{accent-color:var(--green);margin:0}
 /* ---- roll modal ---- */
 .iconbtn.roll:hover{border-color:var(--green-dim);color:var(--green)}
 .modal.rollm{max-width:680px}
@@ -531,7 +537,10 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       </div>
       <div class="ai-controls">
         <button class="iconbtn" id="aiAnalyze">✦ Full analysis</button>
-        <button class="iconbtn" id="aiClear" style="display:none">clear chat</button>
+        <button class="iconbtn" id="aiNewChat">+ new chat</button>
+        <select id="aiChatSel" class="ai-chatsel" aria-label="Past conversations"></select>
+        <button class="iconbtn del" id="aiClear" style="display:none">delete chat</button>
+        <label class="ai-mem" title="Let the coach reference your earlier conversations, journal entries and trade notes"><input type="checkbox" id="aiMemory" checked> memory</label>
         <span class="mut" id="aiStatus"></span>
       </div>
     </div>
@@ -966,13 +975,13 @@ function migrateFutures(){
 
 /* ============================ STATE ============================ */
 const LS_KEY="tape.v1";
-let state={trades:[],marks:{},spreads:[],propfirm:[],notes:{},journal:{},seq:0,updatedAt:0};
+let state={trades:[],marks:{},spreads:[],propfirm:[],notes:{},journal:{},chats:[],seq:0,updatedAt:0};
 let demoMode=false,demoBackup=null;   // demo preview never persists to storage or Drive
 const FS_OK = typeof window.showSaveFilePicker==="function";
 let fileHandle=null, fileName="", fileConnected=false, fileWriteTimer=null;
 
 function serialize(){return JSON.stringify(state,null,2);}
-function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.notes=(p.notes&&typeof p.notes==="object")?p.notes:{};state.journal=(p.journal&&typeof p.journal==="object")?p.journal:{};state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;migrateFutures();return true;}return false;}
+function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.notes=(p.notes&&typeof p.notes==="object")?p.notes:{};state.journal=(p.journal&&typeof p.journal==="object")?p.journal:{};state.chats=Array.isArray(p.chats)?p.chats:[];state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;migrateFutures();return true;}return false;}
 
 function load(){try{const r=localStorage.getItem(LS_KEY);if(r)applyParsed(JSON.parse(r));}catch(e){}}
 function save(){
@@ -1853,7 +1862,7 @@ function aiRetireModel(p,model){if(model&&aiModelOf(p)===model)aiSetModelOf(p,""
 function aiUpdateUI(){
   if(!$("#aiInput"))return;
   const has=!!aiKeyOf(aiProv()),dis=!has||aiBusy;
-  $("#aiClear").style.display=aiHistory.length?"":"none";
+  $("#aiClear").style.display=(aiHistory.length||aiCurrentChat())?"":"none";
   $("#aiAnalyze").disabled=dis;$("#aiSend").disabled=dis;$("#aiInput").disabled=dis;
 }
 // reflect the selected provider in the setup row (key field, model placeholder, note, show/hide)
@@ -1960,7 +1969,7 @@ All P&L is USD. dir is long/short; pnl is realized P/L per closed trade. Closed 
 openPositions include avgPrice (your average entry cost per share/contract), costBasis (total cost), currentPrice (the latest mark used to derive unrealized), direction and multiplier; options also carry strike/expiry/optionType. A spread position lists each leg with side (short = sold to open, so premiumOpen is credit you RECEIVED; long = bought to open, so premiumOpen is what you PAID), optionType, strike, premiumOpen and premiumClose (per-contract prices; multiply by 100 × qty for dollars). Use these fields for scenario questions — e.g. for a covered call exercised at its strike, the stock leg P/L is (strike − avgPrice) × qty × multiplier and you keep the short call's premium. You have cost basis and option premiums; don't claim they're missing.
 
 TRADER'S JOURNAL DATA (JSON):
-${JSON.stringify(data)}`;
+${JSON.stringify(data)}${aiMemoryBlock()}`;
 }
 // one request to the given provider/model; returns text or throws {status,msg,fatal}
 async function aiRequest(prov,model,key,system,hist){
@@ -2018,6 +2027,7 @@ async function aiSend(text){
     const sys=aiSystemInstruction(dashData||{allRealized:[],allPos:[],propEvents:[],totalReal:0,totalUn:0,unKnown:false,winRate:0,avgWin:0,avgLoss:0,wins:0,losses:0,from:null,to:null,instrument:instF});
     const {text:reply,model}=await aiComplete(prov,key,sys,aiHistory,s=>{status.textContent=s;});
     aiHistory.push({role:"model",text:reply});
+    aiPersistChat();
     status.innerHTML=`<span class="mut">via ${model}</span>`;
   }catch(e){
     const msg=e&&e.msg?e.msg:String(e&&e.message||e);
@@ -2045,7 +2055,92 @@ function aiAnalyze(){
   }
   aiSend("Give me a full analysis of my trading so far.");
 }
-function aiClearChat(){aiHistory=[];aiBusy=false;aiRenderChat();$("#aiStatus").textContent="";aiUpdateUI();}
+/* ---- saved conversations -------------------------------------------------
+   Transcripts live in state.chats, so they persist locally and travel with JSON
+   export / Drive sync. Caps keep the store (and the request payload) bounded. */
+const AI_MAX_CHATS=30,AI_MAX_MSGS=80,AI_MAX_CHARS=8000,AI_CHAT_LS="ai_chat_id";
+let aiChatId=null;
+function aiChats(){if(!Array.isArray(state.chats))state.chats=[];return state.chats;}
+function aiCurrentChat(){return aiChats().find(c=>c.id===aiChatId)||null;}
+function aiChatTitle(msgs){const u=msgs.find(m=>m.role==="user");
+  const t=String(u&&u.text||"").replace(/\s+/g," ").trim();
+  return t?(t.length>52?t.slice(0,52)+"…":t):"Untitled chat";}
+function aiChatDate(c){const d=new Date(c.up||c.at||Date.now());
+  return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});}
+function aiSetActive(id){aiChatId=id||null;try{if(id)localStorage.setItem(AI_CHAT_LS,id);else localStorage.removeItem(AI_CHAT_LS);}catch(e){}}
+// called after each exchange; errors aren't stored since they aren't part of the conversation
+function aiPersistChat(){
+  const msgs=aiHistory.filter(m=>!m._err).slice(-AI_MAX_MSGS)
+    .map(m=>({role:m.role,text:String(m.text||"").slice(0,AI_MAX_CHARS)}));
+  if(!msgs.length)return;
+  const list=aiChats();let c=aiCurrentChat();
+  if(!c){c={id:"c"+Date.now()+Math.random().toString(36).slice(2,5),at:Date.now(),msgs:[]};list.push(c);aiSetActive(c.id);}
+  c.msgs=msgs;c.up=Date.now();c.title=aiChatTitle(msgs);
+  list.sort((a,b)=>(a.up||a.at||0)-(b.up||b.at||0));
+  while(list.length>AI_MAX_CHATS)list.shift();          // drop the oldest conversations
+  save();aiRenderChatList();
+}
+function aiClearChat(){aiHistory=[];aiBusy=false;aiSetActive(null);aiRenderChat();$("#aiStatus").textContent="";aiRenderChatList();aiUpdateUI();}
+function aiOpenChat(id){
+  const c=aiChats().find(x=>x.id===id);if(!c)return;
+  aiSetActive(id);aiHistory=(c.msgs||[]).map(m=>({role:m.role,text:m.text}));
+  aiBusy=false;aiRenderChat();$("#aiStatus").textContent="";aiRenderChatList();aiUpdateUI();
+}
+function aiDeleteChat(){
+  const c=aiCurrentChat();if(!c){aiClearChat();return;}
+  if(!confirmDelete(`the conversation “${c.title||"Untitled"}”`))return;
+  state.chats=aiChats().filter(x=>x.id!==c.id);save();aiClearChat();toast("Conversation deleted");
+}
+function aiRestoreChat(){
+  let id=null;try{id=localStorage.getItem(AI_CHAT_LS);}catch(e){}
+  const list=aiChats();
+  const c=(id&&list.find(x=>x.id===id))||list.slice().sort((a,b)=>(b.up||b.at||0)-(a.up||a.at||0))[0];
+  if(c)aiOpenChat(c.id);else aiRenderChatList();
+}
+function aiRenderChatList(){
+  const sel=$("#aiChatSel");if(!sel)return;
+  const list=aiChats().slice().sort((a,b)=>(b.up||b.at||0)-(a.up||a.at||0));
+  sel.innerHTML=`<option value="">${list.length?"— past conversations —":"no saved conversations"}</option>`+
+    list.map(c=>`<option value="${attr(c.id)}"${c.id===aiChatId?" selected":""}>${esc(aiChatDate(c)+" · "+(c.title||"Untitled"))}</option>`).join("");
+  sel.disabled=!list.length;
+}
+/* ---- memory ----
+   Raw transcripts would blow up every request, so older conversations contribute only
+   their opening question and closing advice, alongside the journal in the trader's words. */
+function aiMemoryOn(){try{return localStorage.getItem("ai_memory")!=="0";}catch(e){return true;}}
+function aiSetMemory(on){try{localStorage.setItem("ai_memory",on?"1":"0");}catch(e){}}
+function aiTrim(s,n){s=String(s||"").replace(/\s+/g," ").trim();return s.length>n?s.slice(0,n)+"…":s;}
+function aiMemoryBlock(){
+  if(!aiMemoryOn())return "";
+  const parts=[];
+  const past=aiChats().filter(c=>c.id!==aiChatId&&(c.msgs||[]).length)
+    .sort((a,b)=>(b.up||b.at||0)-(a.up||a.at||0)).slice(0,8);
+  if(past.length){
+    parts.push("EARLIER CONVERSATIONS (most recent first):");
+    for(const c of past){
+      const d=new Date(c.up||c.at||Date.now()).toISOString().slice(0,10);
+      const q=(c.msgs.find(m=>m.role==="user")||{}).text||"";
+      const a=[...c.msgs].reverse().find(m=>m.role==="model");
+      parts.push(`- [${d}] they asked: "${aiTrim(q,140)}"${a?` — you advised: ${aiTrim(a.text,300)}`:""}`);
+    }
+  }
+  const days=Object.keys(state.journal||{}).sort().reverse()
+    .map(d=>({d,e:(state.journal||{})[d]})).filter(x=>x.e&&x.e.text).slice(0,10);
+  if(days.length){
+    parts.push("","THEIR JOURNAL ENTRIES (their own words, most recent first):");
+    for(const x of days)parts.push(`- [${x.d}]${(x.e.tags||[]).length?" ("+x.e.tags.join(", ")+")":""} ${aiTrim(x.e.text,280)}`);
+  }
+  const notes=Object.keys(state.notes||{}).map(id=>({id,n:(state.notes||{})[id]}))
+    .filter(x=>x.n&&x.n.text).sort((a,b)=>(b.n.at||0)-(a.n.at||0)).slice(0,10);
+  if(notes.length){
+    parts.push("","NOTES THEY WROTE ON INDIVIDUAL TRADES:");
+    for(const x of notes)parts.push(`- ${aiTrim(noteSubject(x.id)||"trade",70)}: ${aiTrim(x.n.text,200)}`);
+  }
+  if(!parts.length)return "";
+  let block=parts.join("\n");
+  if(block.length>4000)block=block.slice(0,4000)+"…";
+  return `\n\nMEMORY — what this trader has told you before, across earlier sessions. Use it to spot repeating mistakes and to follow up on what they said they would change; refer to it naturally ("you flagged this on the 12th"). It is their recollection, not ground truth — where it conflicts with DATA, trust DATA.\n${block}`;
+}
 
 /* ============================ TRADES TABLE ============================ */
 let editId=null;
@@ -3386,7 +3481,13 @@ function init(){
   $("#aiModel").addEventListener("keydown",e=>{if(e.key==="Enter")$("#aiSaveKey").click();});
   $("#aiChangeKey").onclick=()=>{aiEditing=true;aiSyncProvider();$("#aiKey").focus();};
   $("#aiAnalyze").onclick=aiAnalyze;
-  $("#aiClear").onclick=aiClearChat;
+  $("#aiClear").onclick=aiDeleteChat;
+  $("#aiNewChat").onclick=()=>{aiClearChat();$("#aiInput").focus();};
+  $("#aiChatSel").onchange=e=>{const v=e.target.value;if(v)aiOpenChat(v);else aiClearChat();};
+  $("#aiMemory").checked=aiMemoryOn();
+  $("#aiMemory").onchange=e=>{aiSetMemory(e.target.checked);
+    toast(e.target.checked?"Coach will reference past chats and your journal":"Memory off — only this conversation is sent");};
+  aiRestoreChat();
   $("#aiSend").onclick=()=>aiSend($("#aiInput").value);
   $("#aiInput").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();aiSend($("#aiInput").value);}});
   aiSyncProvider();
