@@ -442,6 +442,14 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .iconbtn.note.has{border-color:var(--green-dim);color:var(--green)}
 .sd-pos .sd-note{margin-left:4px}
 .jempty{color:var(--faint);font-size:13px;padding:14px 2px}
+/* ---- prop account designation ---- */
+.pf-accts{border-top:1px solid var(--line);margin-top:12px;padding:12px 0 10px}
+.pf-accts-head{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:700}
+.pf-acct-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.pf-acct{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;color:var(--muted);
+  border:1px solid var(--line);border-radius:999px;padding:5px 12px;cursor:pointer;user-select:none}
+.pf-acct input{accent-color:var(--green);margin:0}
+.pf-acct.on{border-color:var(--green-dim);color:var(--green)}
 /* ---- platform import preview ---- */
 .plat-prev{border:1px solid var(--line2);border-radius:11px;padding:13px 14px;margin-top:12px;background:var(--bg2)}
 .pp-head{font-size:13px;color:var(--txt);margin-bottom:4px}
@@ -786,6 +794,15 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
         <button class="btn ghost" id="cancelPf" style="display:none">Cancel</button>
         <span class="note">Negative = cost (subscription, reset, activation fee). Positive = payout. The net flows into your dashboard Realized &amp; Net P&amp;L.</span>
       </div>
+      <div class="pf-accts">
+        <div class="pf-accts-head">Prop trading accounts</div>
+        <p class="note" style="margin-top:2px">Tick the account labels that belong to a prop firm. Trades in those accounts are <b>kept out of your personal P/L</b> (only the payouts above count) and get their own dashboard view — pick <b>Prop Firm</b> in the dashboard filter to analyze them or ask the AI coach about them.</p>
+        <div id="pfAcctList" class="pf-acct-list"></div>
+        <div class="row" style="margin-top:6px">
+          <input type="text" id="pfAcctNew" placeholder="add account label…" list="acctList" style="max-width:220px">
+          <button class="iconbtn" id="pfAcctAdd">mark as prop</button>
+        </div>
+      </div>
     </div>
     <div class="cards" id="propCards"></div>
     <div class="tradesummary" id="propSummary"></div>
@@ -955,7 +972,7 @@ function computePnl(trades){
       while(q>0&&lots.length>0&&lots[0].dir!==execDir){
         const lot=lots[0];const matched=Math.min(lot.remaining,q);const lotDir=lot.dir;
         const perUnit=(num(e.price)-lot.price)*lotDir*mult;
-        realized.push({date:e.date,key,closeId:e.id,symbol:meta.symbol,instrument:meta.instrument,qty:matched,
+        realized.push({date:e.date,key,closeId:e.id,symbol:meta.symbol,instrument:meta.instrument,account:e.account||"",qty:matched,
           openPrice:lot.price,closePrice:num(e.price),dir:lotDir,
           pnl:perUnit*matched-lot.feePerUnit*matched-cf*matched});
         lot.remaining-=matched;q-=matched;if(lot.remaining<=1e-9)lots.shift();
@@ -1028,13 +1045,13 @@ function migrateFutures(){
 
 /* ============================ STATE ============================ */
 const LS_KEY="tape.v1";
-let state={trades:[],marks:{},spreads:[],propfirm:[],notes:{},journal:{},chats:[],importKeys:{},seq:0,updatedAt:0};
+let state={trades:[],marks:{},spreads:[],propfirm:[],notes:{},journal:{},chats:[],importKeys:{},propAccounts:{},seq:0,updatedAt:0};
 let demoMode=false,demoBackup=null;   // demo preview never persists to storage or Drive
 const FS_OK = typeof window.showSaveFilePicker==="function";
 let fileHandle=null, fileName="", fileConnected=false, fileWriteTimer=null;
 
 function serialize(){return JSON.stringify(state,null,2);}
-function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.notes=(p.notes&&typeof p.notes==="object")?p.notes:{};state.journal=(p.journal&&typeof p.journal==="object")?p.journal:{};state.chats=Array.isArray(p.chats)?p.chats:[];state.importKeys=(p.importKeys&&typeof p.importKeys==="object")?p.importKeys:{};state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;migrateFutures();return true;}return false;}
+function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.notes=(p.notes&&typeof p.notes==="object")?p.notes:{};state.journal=(p.journal&&typeof p.journal==="object")?p.journal:{};state.chats=Array.isArray(p.chats)?p.chats:[];state.importKeys=(p.importKeys&&typeof p.importKeys==="object")?p.importKeys:{};state.propAccounts=(p.propAccounts&&typeof p.propAccounts==="object")?p.propAccounts:{};state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;migrateFutures();return true;}return false;}
 
 function load(){try{const r=localStorage.getItem(LS_KEY);if(r)applyParsed(JSON.parse(r));}catch(e){}}
 function save(){
@@ -1386,9 +1403,16 @@ function expiredOpen(expiry,isOpen){if(!isOpen||!expiry)return false;const d=day
 /* ============================ FILTERS ============================ */
 let instF="all",fromD="",toD="";
 let dashData=null;   // last computed dashboard aggregates, reused by the AI analyzer
+// prop-firm accounts: their trades are the FIRM's money, analyzed separately — only the
+// payouts/fees logged on the Prop Firm tab count toward the trader's actual P/L
+function isPropAcct(a){return !!state.propAccounts[String(a||"").trim().toLowerCase()];}
+function setPropAcct(a,on){const k=String(a||"").trim().toLowerCase();if(!k)return;
+  if(on)state.propAccounts[k]=1;else delete state.propAccounts[k];}
 function filteredTrades(){
   return state.trades.filter(t=>{
-    if(instF!=="all"&&t.instrument!==instF)return false;
+    if(instF==="propfirm"){if(!isPropAcct(t.account))return false;}          // prop view: only prop-account trades
+    else{if(isPropAcct(t.account))return false;                              // personal views: firm money excluded
+      if(instF!=="all"&&t.instrument!==instF)return false;}
     if(fromD&&t.date<fromD)return false;
     if(toD&&t.date>toD)return false;
     return true;
@@ -1400,7 +1424,8 @@ function renderDash(){
   const trades=filteredTrades();
   const {realized,openByKey}=computePnl(expandTrades(trades));
   const pos=openPositions(openByKey,state.marks);
-  const spreadsActive=(instF==="all"||instF==="spread")?state.spreads:[];
+  const spreadsActive=instF==="propfirm"?state.spreads.filter(sp=>isPropAcct(sp.account))
+    :(instF==="all"||instF==="spread")?state.spreads.filter(sp=>!isPropAcct(sp.account)):[];
   const spc=computeSpreads(spreadsActive);
   const spRealized=spc.realized.filter(e=>(!fromD||e.date>=fromD)&&(!toD||e.date<=toD));
   // open spreads: unrealized = net credit/debit collected (− open fees)
@@ -1989,8 +2014,11 @@ function aiBuildPayload(d){
       if(p.instrument==="spread"){o.type=spreadName(p.type);o.expiry=p.expiry||null;o.legs=legPayload(p.legs);}
       return o;
     }),
+    propAccounts:Object.keys(state.propAccounts||{}),
+    propFirm:(()=>{const {costs,payouts,net}=computeProp(state.propfirm||[]);
+      return {costs:m2(costs),payouts:m2(payouts),net:m2(net),entries:(state.propfirm||[]).length};})(),
     closedTrades:realized.map(r=>{
-      const t={date:r.date,symbol:r.symbol,instrument:r.instrument,
+      const t={date:r.date,symbol:r.symbol,instrument:r.instrument,account:r.account||undefined,
         qty:m2(r.qty||0),dir:r.dir===1?"long":r.dir===-1?"short":(r.type?spreadName(r.type):null),
         open:r.openPrice!=null?m2(r.openPrice):null,close:r.closePrice!=null?m2(r.closePrice):null,
         pnl:m2(r.pnl)};
@@ -2017,6 +2045,8 @@ ${n<8?`- Only ${n} closed trades so far — flag conclusions as tentative given 
 When the trader asks for a full analysis or review, cover: a **Verdict** (profitable or not, real edge or luck — justify with win rate, profit factor, expectancy, avg win vs avg loss); **What's working** (best instruments/tickers/days, with figures); **What's costing you** (where losses concentrate, named, and whether a few big losers or many small ones — use the closedTrades list); **Risk & discipline** (max drawdown vs total P/L, oversized losers, any revenge-trading pattern in the trade sequence); and **Do this next** (3-5 concrete, prioritized actions tied to their numbers).
 
 For follow-up questions, answer just that question using the data — don't repeat the whole analysis.
+
+PROP-FIRM ACCOUNTS: accounts listed in propAccounts are funded/evaluation accounts at a prop firm. Their trade P/L is the FIRM's capital, not the trader's personal money — the trader's real cash from prop trading is only the payouts/fees in the propFirm cashflows, which they track separately. When filters.instrument is "propfirm" you are reviewing those prop trades specifically: coach like a funding-evaluation mentor — entry quality, sizing relative to the account's drawdown rules, consistency day to day, overtrading after losses, and whether their edge would survive on personal capital. Never mix prop trade P/L into statements about the trader's personal net worth or personal P/L.
 
 All P&L is USD. dir is long/short; pnl is realized P/L per closed trade. Closed option trades include strike/expiry/optionType.
 openPositions include avgPrice (your average entry cost per share/contract), costBasis (total cost), currentPrice (the latest mark used to derive unrealized), direction and multiplier; options also carry strike/expiry/optionType. A spread position lists each leg with side (short = sold to open, so premiumOpen is credit you RECEIVED; long = bought to open, so premiumOpen is what you PAID), optionType, strike, premiumOpen and premiumClose (per-contract prices; multiply by 100 × qty for dollars). Use these fields for scenario questions — e.g. for a covered call exercised at its strike, the stock leg P/L is (strike − avgPrice) × qty × multiplier and you keep the short call's premium. You have cost basis and option premiums; don't claim they're missing.
@@ -2942,6 +2972,7 @@ function importCSV(text){
     <div class="row" style="margin-top:10px">
       ${res.needSymbol?`<div class="field"><label>Symbol <span class="neg">(required — this export doesn't name it)</span></label><input type="text" id="ppSym" placeholder="MES" style="text-transform:uppercase"></div>`:""}
       <div class="field"><label>Account label <span class="mut">(optional — e.g. Topstep 50k)</span></label><input type="text" id="ppAcct" list="acctList"></div>
+      <label class="pf-acct" style="align-self:end" title="Prop trades are analyzed separately and excluded from your personal P/L — only payouts count"><input type="checkbox" id="ppProp">prop firm account</label>
       <button class="btn" id="ppImport">Import ${res.trades.length-dupes>0?res.trades.length-dupes:0} new</button>
       <button class="btn ghost" id="ppCancel">Cancel</button>
     </div></div>`;
@@ -2952,6 +2983,7 @@ function commitImport(){
   if(!pendingImport)return;
   const res=pendingImport;
   const acct=(($("#ppAcct")||{}).value||"").trim();
+  if(acct&&($("#ppProp")||{}).checked)setPropAcct(acct,true);
   const symIn=(($("#ppSym")||{}).value||"").toUpperCase().trim();
   if(res.needSymbol&&!symIn){toast("Enter the symbol this export traded",true);return;}
   const list=res.trades.slice().sort((a,b)=>(a.tt||0)-(b.tt||0));
@@ -3666,7 +3698,20 @@ function renderJournal(){
 /* ============================ PROP FIRM ============================ */
 let editPfId=null;
 function computeProp(list){let costs=0,payouts=0;for(const c of list){const a=num(c.amount);if(a<0)costs+=a;else payouts+=a;}return{costs,payouts,net:costs+payouts};}
+function renderPropAccts(){
+  const box=$("#pfAcctList");if(!box)return;
+  const known=[...new Set([...state.trades,...state.spreads].map(x=>(x.account||"").trim()).filter(Boolean))];
+  const marked=Object.keys(state.propAccounts||{});
+  const names=[...new Set([...known,...marked.map(m=>known.find(k=>k.toLowerCase()===m)||m)])]
+    .sort((a,b)=>a.localeCompare(b));
+  box.innerHTML=names.length?names.map(a=>`<label class="pf-acct${isPropAcct(a)?" on":""}"><input type="checkbox" data-pfacct="${attr(a)}"${isPropAcct(a)?" checked":""}>${esc(a)}</label>`).join("")
+    :`<span class="mut" style="font-size:12px">No account labels yet — set an account on trades (or when importing) and it appears here.</span>`;
+  box.querySelectorAll("[data-pfacct]").forEach(cb=>cb.onchange=()=>{
+    setPropAcct(cb.dataset.pfacct,cb.checked);save();refreshAll();
+    toast(cb.checked?`${cb.dataset.pfacct} marked as prop — its trades no longer count toward personal P/L`:`${cb.dataset.pfacct} is a personal account again`);});
+}
 function renderProp(){
+  renderPropAccts();
   const all=state.propfirm.slice();
   const {costs,payouts,net}=computeProp(all);
   $("#propCards").innerHTML=[
@@ -3799,6 +3844,8 @@ function init(){
   $("#cancelSpread").onclick=resetSpreadForm;
   resetPfForm();
   $("#savePf").onclick=savePf;
+  $("#pfAcctAdd").onclick=()=>{const v=$("#pfAcctNew").value.trim();if(!v)return;
+    setPropAcct(v,true);$("#pfAcctNew").value="";save();refreshAll();toast(`${v} marked as a prop account`);};
   $("#cancelPf").onclick=resetPfForm;
   const savedTheme=(()=>{try{return localStorage.getItem("tape_theme");}catch(e){return null;}})()||"oa";
   document.documentElement.dataset.theme=savedTheme;$("#themeSel").value=savedTheme;
