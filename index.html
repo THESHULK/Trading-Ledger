@@ -492,6 +492,10 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .ai-chatsel:disabled{opacity:.5}
 .ai-mem{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--faint);
   font-family:var(--mono);cursor:pointer;user-select:none}
+.ai-scope{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--faint);font-family:var(--mono)}
+.ai-scope select{background:var(--bg2);border:1px solid var(--line);border-radius:6px;color:var(--muted);
+  padding:4px 8px;font-size:11px;font-family:var(--mono)}
+.ai-scope select.prop{border-color:var(--green-dim);color:var(--green)}
 .ai-mem input{accent-color:var(--green);margin:0}
 /* ---- roll modal ---- */
 .iconbtn.roll:hover{border-color:var(--green-dim);color:var(--green)}
@@ -581,6 +585,16 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
         <button class="iconbtn" id="aiSend">Send</button>
       </div>
       <div class="ai-controls">
+        <label class="ai-scope" title="Which slice of your data the coach sees — same as the dashboard filter above">coaching on
+          <select id="aiScope">
+            <option value="all">All (personal)</option>
+            <option value="stock">Stocks</option>
+            <option value="option">Options</option>
+            <option value="future">Futures</option>
+            <option value="spread">Sell-Side</option>
+            <option value="propfirm">Prop Firm</option>
+          </select>
+        </label>
         <button class="iconbtn" id="aiAnalyze">✦ Full analysis</button>
         <button class="iconbtn" id="aiNewChat">+ new chat</button>
         <select id="aiChatSel" class="ai-chatsel" aria-label="Past conversations"></select>
@@ -3851,8 +3865,12 @@ function init(){
   $("#f-date").value=today();
   syncFormFields();
   document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>switchView(b.dataset.v));
+  const syncAiScope=()=>{const el=$("#aiScope");if(!el)return;el.value=instF;el.classList.toggle("prop",instF==="propfirm");};
   document.querySelectorAll("#instFilter button").forEach(b=>b.onclick=()=>{
-    instF=b.dataset.i;document.querySelectorAll("#instFilter button").forEach(x=>x.classList.toggle("on",x===b));renderDash();});
+    instF=b.dataset.i;document.querySelectorAll("#instFilter button").forEach(x=>x.classList.toggle("on",x===b));syncAiScope();renderDash();});
+  $("#aiScope").onchange=e=>{const b=[...document.querySelectorAll("#instFilter button")].find(x=>x.dataset.i===e.target.value);
+    if(b)b.click();};
+  syncAiScope();
   $("#fromDate").onchange=e=>{fromD=e.target.value;renderDash();};
   $("#toDate").onchange=e=>{toD=e.target.value;renderDash();};
   $("#clearDates").onclick=()=>{fromD=toD="";$("#fromDate").value="";$("#toDate").value="";renderDash();};
