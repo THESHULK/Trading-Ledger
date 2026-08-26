@@ -695,7 +695,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <input type="file" id="shotFile" accept="image/*" style="display:none">
     </div>
 
-    <p class="note">Single-leg stock/option/future executions plus your sell-side spreads (one summary row each). Spread rows are read-only here — use <b>edit ↗</b> to manage them on the Sell-Side tab. <label style="margin-left:6px;cursor:pointer;user-select:none"><input type="checkbox" id="hideSellSide" style="vertical-align:middle"> hide sell-side</label></p>
+    <p class="note">Single-leg stock/option/future executions plus your sell-side spreads (one summary row each). Trades in prop-firm accounts are kept separate under <b>Prop Firm → Trades</b>. Spread rows are read-only here — use <b>edit ↗</b> to manage them on the Sell-Side tab. <label style="margin-left:6px;cursor:pointer;user-select:none"><input type="checkbox" id="hideSellSide" style="vertical-align:middle"> hide sell-side</label></p>
     <div class="tradesummary" id="tradeSummary"></div>
     <div class="tablewrap"><table id="tradeTable"></table></div>
   </section>
@@ -782,6 +782,13 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
   </section>
 
   <section class="view" id="view-prop">
+    <div class="filters" style="margin-bottom:14px">
+      <div class="seg" id="propTabs">
+        <button data-pt="cash" class="on">Fees &amp; Payouts</button>
+        <button data-pt="trades" id="ppTabTrades">Trades</button>
+      </div>
+    </div>
+    <div id="propPaneCash">
     <div class="panel">
       <h3>Prop Firm Fees &amp; Payouts</h3>
       <div class="form" id="propForm">
@@ -807,6 +814,15 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <div class="cards" id="propCards"></div>
     <div class="tradesummary" id="propSummary"></div>
     <div class="tablewrap"><table id="propTable"></table></div>
+    </div>
+    <div id="propPaneTrades" style="display:none">
+      <div class="panel">
+        <h3>Prop Firm Trades <span class="hint">firm capital — kept out of your personal P/L</span></h3>
+        <p class="note">Every trade in an account marked as prop lives here, separate from your real trades. Only the payouts &amp; fees on the other sub-tab count toward your money — these are for review: filter, sort, journal them, or switch the dashboard filter to <b>Prop Firm</b> and ask the AI coach for feedback.</p>
+        <div class="tradesummary" id="propTradeSummary"></div>
+        <div class="tablewrap"><table id="propTradeTable"></table></div>
+      </div>
+    </div>
   </section>
 
   <!-- DATA -->
@@ -2277,10 +2293,10 @@ function thCells(cols,sort){const a=c=>sort.col===c?(sort.dir<0?" ▼":" ▲"):"
   return cols.map(([c,l,al])=>`<th class="${al||''}" data-col="${c}" style="cursor:pointer;user-select:none">${l}${a(c)}</th>`).join("");}
 function wireSort(sel,sort,reRender,ascCols){$(sel).querySelectorAll("th[data-col]").forEach(th=>th.onclick=()=>{
   const c=th.dataset.col;if(sort.col===c)sort.dir*=-1;else{sort.col=c;sort.dir=(ascCols&&ascCols.indexOf(c)>=0)?1:-1;}reRender();});}
-let tradeSort={col:"date",dir:-1},spreadSort={col:"date",dir:-1},propSort={col:"date",dir:-1};
+let tradeSort={col:"date",dir:-1},spreadSort={col:"date",dir:-1},propSort={col:"date",dir:-1},propTradeSort={col:"date",dir:-1};
 /* ---- per-column filters (spreadsheet style) ---- */
 let _ff=null; // pending refocus after re-render
-const tradeFilters={},spreadFilters={},propFilters={},posFilters={};
+const tradeFilters={},spreadFilters={},propFilters={},posFilters={},propTradeFilters={};
 function attr(s){return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");}
 function distinctVals(arr,getv){return [...new Set(arr.map(getv).map(v=>v==null?"":String(v)).filter(v=>v!==""))].sort((a,b)=>a.localeCompare(b));}
 function headFilter(cols,sort,kinds,filters,distinct,hasActions){
@@ -2334,8 +2350,8 @@ function fitWideTable(sel){
   wrap.style.width=target+"px";wrap.style.marginLeft=wrap.style.marginRight="-"+off+"px";
 }
 
-function renderTradeSummary(rows,plByTrade){
-  const el=$("#tradeSummary");if(!el)return;
+function renderTradeSummary(rows,plByTrade,sel,filters,label){
+  const el=$(sel||"#tradeSummary");if(!el)return;
   let realTotal=0,closed=0,spOpenUn=0,spOpenCount=0;
   const tradeObjs=[];
   for(const it of rows){
@@ -2355,10 +2371,10 @@ function renderTradeSummary(rows,plByTrade){
   for(const p of pos){if(p.unrealized!=null){unTotal+=p.unrealized;unKnown=true;}}
   if(spOpenCount){unTotal+=spOpenUn;unKnown=true;}
   const openCount=pos.length+spOpenCount;
-  const active=Object.entries(tradeFilters).filter(([k,v])=>v!=null&&v!=="");
+  const active=Object.entries(filters||tradeFilters).filter(([k,v])=>v!=null&&v!=="");
   const net=realTotal+(unKnown?unTotal:0);
   el.innerHTML=
-    `<span class="lbl">${active.length?"Filtered total":"All trades"}</span>`+
+    `<span class="lbl">${active.length?"Filtered total":(label||"All trades")}</span>`+
     `<span class="stat"><span class="k">Realized P/L</span><b class="${cls(realTotal)}">${fmtSignedColored(realTotal)}</b></span>`+
     `<span class="stat"><span class="k">Unrealized</span><b class="${unKnown?cls(unTotal):"mut"}">${unKnown?fmtSignedColored(unTotal):"—"}</b></span>`+
     `<span class="stat"><span class="k">Net</span><b class="${unKnown?cls(net):cls(realTotal)}">${fmtSignedColored(net)}</b></span>`+
@@ -2434,9 +2450,14 @@ function spreadRowHtml(s){
         ${noteBtn(s.id)}
         <button class="iconbtn del" data-sdel="${s.id}">del</button></td>
   </tr>`;}
-function renderTrades(){
+/* one renderer, two ledgers: personal trades (#tradeTable) and prop-account trades
+   (#propTradeTable on the Prop Firm tab). P/L matching runs per scope so a symbol traded
+   both personally and in a prop account never FIFO-matches across the boundary. */
+function renderTradesTable(cfg){
+  const inScope=o=>cfg.prop?isPropAcct(o.account):!isPropAcct(o.account);
+  const scoped=state.trades.filter(inScope);
   const plByTrade={};
-  const _pnl=computePnl(expandTrades(state.trades));const openByKey=_pnl.openByKey;
+  const _pnl=computePnl(expandTrades(scoped));const openByKey=_pnl.openByKey;
   for(const r of _pnl.realized){plByTrade[r.closeId]=(plByTrade[r.closeId]||0)+r.pnl;}
   // unified accessor over a tagged item {k:'trade'|'spread', o:obj}
   const gv=(it,c)=>{const o=it.o;
@@ -2457,20 +2478,20 @@ function renderTrades(){
       c==="quantity"?o.quantity:c==="price"?spreadNetOpen(o):c==="mult"?100:c==="fees"?(o.fees||0):
       c==="pl"?(closed?spreadRealized(o):null):"";
   };
-  const items=state.trades.map(o=>({k:"trade",o}));
-  if(!hideSellSide)items.push(...state.spreads.map(o=>({k:"spread",o})));
+  const items=scoped.map(o=>({k:"trade",o}));
+  if(cfg.prop||!hideSellSide)items.push(...state.spreads.filter(inScope).map(o=>({k:"spread",o})));
   const kinds={instrument:"select",account:"select",symbol:"text",action:"select",strike:"text",dte:"text",expiry:"text"};
   const distinct={instrument:distinctVals(items,it=>gv(it,"instrument")),account:distinctVals(items,it=>gv(it,"account")),action:distinctVals(items,it=>gv(it,"action"))};
-  const rows=items.filter(it=>rowPasses(c=>gv(it,c),kinds,tradeFilters))
-    .sort((a,b)=>cmpVals(gv(a,tradeSort.col),gv(b,tradeSort.col),tradeSort.dir)||((b.o._seq||0)-(a.o._seq||0)));
-  renderTradeSummary(rows,plByTrade);
-  const t=$("#tradeTable");
+  const rows=items.filter(it=>rowPasses(c=>gv(it,c),kinds,cfg.filters))
+    .sort((a,b)=>cmpVals(gv(a,cfg.sort.col),gv(b,cfg.sort.col),cfg.sort.dir)||((b.o._seq||0)-(a.o._seq||0)));
+  renderTradeSummary(rows,plByTrade,cfg.summarySel,cfg.filters,cfg.label);
+  const t=$(cfg.sel);if(!t)return;
   const cols=[["date","Date","l"],["closed","Closed","l"],["instrument","Instrument","l"],["symbol","Symbol","l"],["account","Account","l"],["dte","DTE",""],["expiry","Expiry",""],["strike","Strike",""],["action","Side","l"],["quantity","Qty",""],["price","Price",""],["fees","Fees",""],["pl","Realized P/L",""]];
-  const head=headFilter(cols,tradeSort,kinds,tradeFilters,distinct,true);
-  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="14"><div class="empty">no trades match — adjust filters, add one above, or import a CSV</div></td></tr></tbody>`;wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);fitWideTable("#tradeTable");return;}
+  const head=headFilter(cols,cfg.sort,kinds,cfg.filters,distinct,true);
+  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="14"><div class="empty">${cfg.empty}</div></td></tr></tbody>`;wireTable(cfg.sel,cfg.sort,cfg.filters,cfg.rerender,["instrument","symbol","action","account","strike"]);fitWideTable(cfg.sel);return;}
   t.innerHTML=head+`<tbody>`+rows.map(it=>it.k==="trade"?tradeRowHtml(it.o,plByTrade[it.o.id],tradeOpen(it.o,plByTrade[it.o.id],openByKey)):spreadRowHtml(it.o)).join("")+`</tbody>`;
-  wireTable("#tradeTable",tradeSort,tradeFilters,renderTrades,["instrument","symbol","action","account","strike"]);
-  fitWideTable("#tradeTable");
+  wireTable(cfg.sel,cfg.sort,cfg.filters,cfg.rerender,["instrument","symbol","action","account","strike"]);
+  fitWideTable(cfg.sel);
   t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
     const tr=state.trades.find(x=>x.id===b.dataset.del);
     if(!confirmDelete(tr?`this ${tr.instrument} trade (${(tr.symbol||"?").toUpperCase()})`:"this trade"))return;
@@ -2485,6 +2506,14 @@ function renderTrades(){
     state.spreads=state.spreads.filter(x=>x.id!==b.dataset.sdel);save();refreshAll();toast("Sell-side trade deleted");});
   t.querySelectorAll("[data-sedit]").forEach(b=>b.onclick=()=>loadSpreadEdit(b.dataset.sedit));
 }
+function renderTrades(){renderTradesTable({sel:"#tradeTable",summarySel:"#tradeSummary",sort:tradeSort,filters:tradeFilters,
+  rerender:renderTrades,prop:false,label:"All trades",
+  empty:"no trades match — adjust filters, add one above, or import a CSV"});}
+function renderPropTrades(){renderTradesTable({sel:"#propTradeTable",summarySel:"#propTradeSummary",sort:propTradeSort,filters:propTradeFilters,
+  rerender:renderPropTrades,prop:true,label:"Prop trades",
+  empty:"no prop-account trades yet — tick an account under “Prop trading accounts”, or check “prop firm account” when importing"});
+  const n=state.trades.filter(t=>isPropAcct(t.account)).length+state.spreads.filter(x=>isPropAcct(x.account)).length;
+  const b=$("#ppTabTrades");if(b)b.textContent=`Trades${n?` (${n})`:""}`;}
 
 /* ============================ POSITIONS TABLE ============================ */
 let posSort={col:"unrealized",dir:-1};
@@ -3744,7 +3773,7 @@ function renderPropAccts(){
     toast(cb.checked?`${cb.dataset.pfacct} marked as prop — its trades no longer count toward personal P/L`:`${cb.dataset.pfacct} is a personal account again`);});
 }
 function renderProp(){
-  renderPropAccts();
+  renderPropAccts();renderPropTrades();
   const all=state.propfirm.slice();
   const {costs,payouts,net}=computeProp(all);
   $("#propCards").innerHTML=[
@@ -3877,6 +3906,12 @@ function init(){
   $("#cancelSpread").onclick=resetSpreadForm;
   resetPfForm();
   $("#savePf").onclick=savePf;
+  document.querySelectorAll("#propTabs button").forEach(b=>b.onclick=()=>{
+    document.querySelectorAll("#propTabs button").forEach(x=>x.classList.toggle("on",x===b));
+    $("#propPaneCash").style.display=b.dataset.pt==="cash"?"":"none";
+    $("#propPaneTrades").style.display=b.dataset.pt==="trades"?"":"none";
+    if(b.dataset.pt==="trades")renderPropTrades();
+  });
   $("#pfAcctAdd").onclick=()=>{const v=$("#pfAcctNew").value.trim();if(!v)return;
     setPropAcct(v,true);$("#pfAcctNew").value="";save();refreshAll();toast(`${v} marked as a prop account`);};
   $("#cancelPf").onclick=resetPfForm;
