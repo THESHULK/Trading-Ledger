@@ -820,7 +820,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <div class="panel">
       <h3>Import Trades <span class="hint">CSV · prop firm & broker exports</span></h3>
       <p class="note">
-        Drop in a trade-history export from your platform — <b>Tradovate, NinjaTrader, Rithmic, TradingView</b>
+        Drop in a trade-history export from your platform — <b>Tradovate</b> (fills or position history), <b>NinjaTrader, Rithmic, TradingView</b>
         (list of trades), or any fills CSV with symbol/side/qty/price columns. The format is detected automatically,
         futures contracts like <code>MESU5</code> are recognized (multiplier included), you preview before anything
         is saved, and re-importing an overlapping export skips duplicates. Prop-firm evals: label each import with
@@ -2788,12 +2788,14 @@ const HEAD_ALIASES={date:["date","day","tradedate","datetime","timestamp","time"
   instrument:["instrument","assettype","class","sectype","type"],
   symbol:["symbol","ticker","underlying","sym","contract","product","instrumentname"],account:["account","acct","accountname"],
   action:["action","side","direction","buysell","bs","b/s","tradeside"],
-  quantity:["quantity","qty","shares","contracts","size","amount","filledqty","fillqty","execqty","filled"],
+  quantity:["quantity","qty","shares","contracts","size","amount","filledqty","fillqty","execqty","filled","pairedqty"],
   price:["price","fill","fillprice","premium","avgprice","avgfillprice","execprice","tradeprice","priceusd"],
   fees:["fees","fee","commission","commissions","cost","commissionfee","totalfees"],expiry:["expiry","expiration","expdate","exp"],
   strike:["strike","strikeprice"],optionType:["optiontype","callput","cp","right","putcall"],
   multiplier:["multiplier","mult","contractmultiplier","pointvalue"],
-  entry:["entryprice","openprice","boughtprice","avgentryprice"],exit:["exitprice","closeprice","soldprice","avgexitprice"],
+  entry:["entryprice","openprice","avgentryprice"],exit:["exitprice","closeprice","avgexitprice"],
+  buyPrice:["buyprice"],sellPrice:["sellprice"],pairId:["pairid"],
+  soldDate:["soldtimestamp","selltime"],pnlCol:["pl","profit","netpnl","realizedpnl"],
   exitDate:["exittime","exitdate","closetime","closedate","soldtimestamp"],mpos:["marketpos","position","longshort"],
   tradeno:["tradeno","trade","tradenumber","tradeid","id"],pnl:["profit","pnl","netpnl","realizedpnl","profitusd","netprofit"]};
 function mapHeaders(hdr){
@@ -2856,7 +2858,8 @@ function parseWhen(v){
   return {date:"",t:null};
 }
 function importKeyExec(f){return ["x",f.date,f.tt||"",f.symbol,f.action,f.quantity,f.price].join("|");}
-function importKeyRT(f){return ["r",f.date,f.symbol,f.direction,f.quantity,f.entry,f.exit??"",f.exitDate||""].join("|");}
+function importKeyRT(f){return f.uid?["r",f.symbol,f.uid].join("|")
+  :["r",f.date,f.symbol,f.direction,f.quantity,f.entry,f.exit??"",f.exitDate||""].join("|");}
 // per-row instrument when the file doesn't say: futures by contract pattern, OCC options, else stock
 function inferInst(symRaw,instVal){
   const iv=(instVal||"").toLowerCase();
@@ -2899,6 +2902,36 @@ function analyzeImportCSV(text){
     const needSymbol=out.some(x=>x.needsSym);
     return {format:"TradingView list of trades",trades:out,skipped,warnings:warn,needSymbol};
   }
+  // ---- shape D: paired trades — Tradovate Position History (Buy Price / Sell Price / Paired Qty) ----
+  if(idx.buyPrice!=null&&idx.sellPrice!=null){
+    for(const r of body){
+      const symIn=get(r,"symbol");if(!symIn){skipped++;continue;}
+      const info=inferInst(symIn,"");
+      const buyP=cleanNum(get(r,"buyPrice")),sellP=cleanNum(get(r,"sellPrice"));
+      const qty=Math.abs(cleanNum(get(r,"quantity")))||0;
+      if(!(qty>0)||!isFinite(buyP)||!isFinite(sellP)){skipped++;continue;}
+      // whichever side filled first is the opening side
+      const tBuy=parseWhen((norm.indexOf("boughttimestamp")>=0?r[norm.indexOf("boughttimestamp")]:"")||"").t;
+      const tSell=parseWhen(get(r,"soldDate")).t;
+      const long=(tBuy!=null&&tSell!=null)?tBuy<=tSell:true;
+      const open=long?{p:buyP,t:tBuy}:{p:sellP,t:tSell};
+      const close=long?{p:sellP,t:tSell}:{p:buyP,t:tBuy};
+      const dOpen=open.t!=null?new Date(open.t):null,dClose=close.t!=null?new Date(close.t):null;
+      const ymd=d=>d?`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`:"";
+      // derive the multiplier from the file's own P/L when the root is unknown to us
+      let mult=defaultMultiplier("future",info.sym);
+      const pl=cleanNum(get(r,"pnlCol"));
+      if(mult===1&&isFinite(pl)&&Math.abs(sellP-buyP)>1e-9){
+        const dm=Math.abs(pl/((sellP-buyP)*qty));if(isFinite(dm)&&dm>0)mult=Math.round(dm*100)/100;
+      }
+      out.push({kind:"rt",instrument:"future",symbol:info.sym,direction:long?"long":"short",
+        quantity:qty,entry:open.p,exit:close.p,date:ymd(dOpen)||parseWhen(get(r,"date")).date||today(),
+        exitDate:ymd(dClose)||"",tt:open.t,fees:0,mult,account:get(r,"account"),uid:get(r,"pairId")||""});
+    }
+    if(!out.length)return {error:"Recognized a paired-trades file but found no usable rows."};
+    if(idx.fees==null)warn.push("this export has no commission column — fees were imported as 0");
+    return {format:"paired trades (position history)",trades:out,skipped,warnings:warn,needSymbol:false};
+  }
   // ---- shape A: round-trip rows (NinjaTrader trade performance & friends) ----
   if(idx.entry!=null&&idx.exit!=null){
     for(const r of body){
@@ -2914,7 +2947,7 @@ function analyzeImportCSV(text){
       if(info.inst==="future"){
         out.push({kind:"rt",instrument:"future",symbol:info.sym,direction:dir,quantity:qty,
           entry,exit:isFinite(exit)?exit:null,date:wEn.date||today(),exitDate:wEx.date||"",
-          tt:wEn.t,fees:cleanNum(get(r,"fees"))||0});
+          tt:wEn.t,fees:cleanNum(get(r,"fees"))||0,account:get(r,"account")});
       }else{ // non-futures round trips → two executions so FIFO matching stays canonical
         const fee=cleanNum(get(r,"fees"))||0;
         const base={kind:"exec",instrument:info.inst,symbol:info.sym,quantity:qty,
@@ -2997,7 +3030,7 @@ function commitImport(){
       state.trades.push({id:"t"+Date.now()+added+Math.random().toString(36).slice(2,5),_seq:state.seq++,
         date:f.date,instrument:"future",symbol:f.symbol,account:acct||f.account||"",
         direction:f.direction,quantity:f.quantity,entry:f.entry,exit:f.exit,exitDate:f.exitDate||"",
-        fees:f.fees||0,multiplier:defaultMultiplier("future",f.symbol)});
+        fees:f.fees||0,multiplier:f.mult||defaultMultiplier("future",f.symbol)});
     }else{
       const t={id:"t"+Date.now()+added+Math.random().toString(36).slice(2,5),_seq:state.seq++,
         date:f.date,instrument:f.instrument,symbol:f.symbol,account:acct||f.account||"",
