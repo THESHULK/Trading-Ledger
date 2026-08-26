@@ -846,6 +846,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <p class="note">Curious what the app looks like full of trades? Flip this on to load a sample portfolio that populates every tab and chart. <b>Your own data is kept safe</b> and returns the moment you switch it off — nothing is saved to this browser or synced to Drive while demo data is showing.</p>
       <label class="demoswitch"><input type="checkbox" id="demoToggle"><span>Show demo data</span></label>
       <button class="iconbtn" id="showWelcome" style="margin-left:14px">Show the intro again</button>
+      <button class="iconbtn" id="showWhatsNew">What's new</button>
     </div>
     <div class="panel">
       <h3>Import Trades <span class="hint">CSV · prop firm & broker exports</span></h3>
@@ -906,6 +907,24 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 </main>
 
 <div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="whatsnewModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="wnTitle">
+    <h2 id="wnTitle">What's new<span class="tick">Aug 2026</span></h2>
+    <p class="lead">A lot has landed since your last visit:</p>
+    <ul class="feat">
+      <li><span class="ic">🏦</span><span><b>Prop firm separation</b> — mark accounts as prop (Prop Firm tab): their trades get their own <b>Trades</b> sub-tab and stay out of your personal P/L; only payouts &amp; fees count.</span></li>
+      <li><span class="ic">📥</span><span><b>Platform imports</b> — drop in Tradovate (fills or position history), NinjaTrader, Rithmic or TradingView exports; auto-detected, previewed, duplicates skipped.</span></li>
+      <li><span class="ic">🔁</span><span><b>Roll button</b> on open options &amp; sell-side positions — close the old contract and open the new one in one step, with live credit/debit math.</span></li>
+      <li><span class="ic">📓</span><span><b>Journaling</b> — a Journal tab with a month calendar and daily P/L, plus a <b>note</b> button on every trade.</span></li>
+      <li><span class="ic">🤖</span><span><b>AI coach upgrades</b> — conversations are saved and referenced across sessions, a "coaching on" scope picker (incl. Prop Firm), and screenshot import auto-recovers from retired models.</span></li>
+      <li><span class="ic">⚠️</span><span><b>Expired-position flags</b>, ITM/OTM coloring with auto price fetch, collapsible sections everywhere, and a cleaner mobile layout.</span></li>
+    </ul>
+    <div class="modal-btns">
+      <button class="btn primary" id="wnClose">Got it</button>
+    </div>
+  </div>
+</div>
 
 <div class="modal-overlay" id="welcomeModal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle">
@@ -3842,6 +3861,14 @@ function loadPfEdit(id){const e=state.propfirm.find(x=>x.id===id);if(!e)return;e
 
 /* ---- first-visit welcome ---- */
 const WELCOME_LS="tape_welcomed";
+/* what's-new: bump WHATSNEW_VER when shipping notable changes; returning users see the
+   popup once per version. Brand-new users get the welcome modal instead and are marked
+   current so they aren't shown "news" about features that were always there for them. */
+const WHATSNEW_VER="2026-08-26",WN_LS="tape_whatsnew";
+function wnSeen(){try{return localStorage.getItem(WN_LS)===WHATSNEW_VER;}catch(e){return true;}}
+function wnMarkSeen(){try{localStorage.setItem(WN_LS,WHATSNEW_VER);}catch(e){}}
+function openWhatsNew(){const o=$("#whatsnewModal");if(o)o.classList.add("show");}
+function closeWhatsNew(){const o=$("#whatsnewModal");if(o)o.classList.remove("show");wnMarkSeen();}
 function welcomeSeen(){try{return localStorage.getItem(WELCOME_LS)==="1";}catch(e){return false;}}
 function openWelcome(){const o=$("#welcomeModal");if(o)o.classList.add("show");}
 function closeWelcome(){const o=$("#welcomeModal");if(o)o.classList.remove("show");try{localStorage.setItem(WELCOME_LS,"1");}catch(e){}}
@@ -3946,6 +3973,7 @@ function init(){
   $("#welcomeStart").onclick=closeWelcome;
   $("#welcomeDemo").onclick=()=>{closeWelcome();$("#demoToggle").checked=true;setDemo(true);switchView("dash");};
   $("#showWelcome").onclick=openWelcome;
+  $("#showWhatsNew").onclick=openWhatsNew;
   $("#noteSave").onclick=saveNote;
   $("#noteCancel").onclick=closeNote;
   $("#noteDelete").onclick=deleteNote;
@@ -3967,7 +3995,11 @@ function init(){
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#rollModal").classList.contains("show"))closeRoll();});
   $("#welcomeModal").addEventListener("click",e=>{if(e.target===$("#welcomeModal"))closeWelcome();});
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#welcomeModal").classList.contains("show"))closeWelcome();});
-  if(!welcomeSeen())openWelcome();
+  $("#wnClose").onclick=closeWhatsNew;
+  $("#whatsnewModal").addEventListener("click",e=>{if(e.target===$("#whatsnewModal"))closeWhatsNew();});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#whatsnewModal").classList.contains("show"))closeWhatsNew();});
+  if(!welcomeSeen()){wnMarkSeen();openWelcome();}
+  else if(!wnSeen())openWhatsNew();
   $("#expJson").onclick=exportJSON;$("#expCsv").onclick=exportCSV;
   $("#impJson").onclick=()=>$("#jsonFile").click();
   $("#jsonFile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
