@@ -442,6 +442,15 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .iconbtn.note.has{border-color:var(--green-dim);color:var(--green)}
 .sd-pos .sd-note{margin-left:4px}
 .jempty{color:var(--faint);font-size:13px;padding:14px 2px}
+/* ---- platform import preview ---- */
+.plat-prev{border:1px solid var(--line2);border-radius:11px;padding:13px 14px;margin-top:12px;background:var(--bg2)}
+.pp-head{font-size:13px;color:var(--txt);margin-bottom:4px}
+.pp-syms{font-family:var(--mono);font-size:11px;margin-bottom:6px}
+.pp-warn{color:var(--amber,#e8b339);font-size:12px;margin-bottom:6px}
+.pp-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11.5px}
+.pp-table th{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);padding:5px 8px;text-align:right;border-bottom:1px solid var(--line)}
+.pp-table td{padding:5px 8px;text-align:right;border-bottom:1px solid var(--line)}
+.pp-table .l{text-align:left}
 /* ---- journal calendar ---- */
 .jc-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .jc-head b{font-family:var(--mono);font-size:13px;color:var(--txt);min-width:150px;text-align:center}
@@ -792,19 +801,23 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <button class="iconbtn" id="showWelcome" style="margin-left:14px">Show the intro again</button>
     </div>
     <div class="panel">
-      <h3>Import CSV</h3>
+      <h3>Import Trades <span class="hint">CSV · prop firm & broker exports</span></h3>
       <p class="note">
-        Expected columns (header row, any order, case-insensitive):<br>
-        <code>date</code> <code>instrument</code> <code>symbol</code> <code>action</code> <code>quantity</code> <code>price</code> <code>fees</code> <code>expiry</code> <code>strike</code> <code>optionType</code> <code>multiplier</code><br>
-        • <b>instrument</b>: stock / option / future &nbsp;•&nbsp; <b>action</b>: buy / sell (BTO,BTC→buy; STO,STC→sell)<br>
-        • expiry/strike/optionType only needed for options &nbsp;•&nbsp; multiplier auto-fills if blank (option=100, futures by symbol).
+        Drop in a trade-history export from your platform — <b>Tradovate, NinjaTrader, Rithmic, TradingView</b>
+        (list of trades), or any fills CSV with symbol/side/qty/price columns. The format is detected automatically,
+        futures contracts like <code>MESU5</code> are recognized (multiplier included), you preview before anything
+        is saved, and re-importing an overlapping export skips duplicates. Prop-firm evals: label each import with
+        its account (e.g. <i>Topstep 50k</i>) and filter by account anywhere. Or use this app's own
+        <code>template CSV</code> below. <span class="mut">Live broker sync isn't possible from a serverless page —
+        exports are the private, no-credentials way.</span>
       </p>
       <div class="row">
-        <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none">
-        <button class="btn" id="csvPick">Choose CSV file…</button>
+        <input type="file" id="csvFile" accept=".csv,.txt,text/csv,text/plain" style="display:none">
+        <button class="btn" id="csvPick">Choose export / CSV…</button>
         <button class="btn ghost" id="csvTemplate">Download template</button>
         <span class="note" id="csvNote"></span>
       </div>
+      <div id="csvPreview"></div>
     </div>
     <div class="panel">
       <h3>Sync across devices <span class="hint">Google Drive · your account</span></h3>
@@ -996,16 +1009,16 @@ function migrateFutures(){
     const exes=groups[sym].slice().sort((a,b)=>{const da=String(a.date),db=String(b.date);if(da<db)return -1;if(da>db)return 1;return (a._seq||0)-(b._seq||0);});
     let lots=[],ctr=0;
     const emit=(lot,exit,exitDate,exitFeePer,m)=>out.push({
-      id:`fmig_${lot.srcId}_${ctr++}`,_seq:lot._seq,instrument:"future",symbol:sym,
+      id:`fmig_${lot.srcId}_${ctr++}`,_seq:lot._seq,instrument:"future",symbol:sym,account:lot.account||"",
       direction:lot.dir===1?"long":"short",quantity:m,entry:lot.price,exit,
       multiplier:lot.mult,fees:Math.round((lot.feePer+(exitFeePer||0))*m*100)/100,date:lot.date,exitDate});
     for(const e of exes){
       const dir=e.action==="buy"?1:-1;let q=num(e.quantity);const price=num(e.price);const fee=num(e.fees);const mult=num(e.multiplier,defaultMultiplier("future",sym))||1;const feePer=q?fee/q:0;
-      if(lots.length===0||lots[0].dir===dir){lots.push({dir,price,qty:q,feePer,date:e.date,_seq:e._seq,mult,srcId:e.id});continue;}
+      if(lots.length===0||lots[0].dir===dir){lots.push({dir,price,qty:q,feePer,date:e.date,_seq:e._seq,mult,srcId:e.id,account:e.account||""});continue;}
       while(q>0&&lots.length&&lots[0].dir!==dir){const lot=lots[0];const m=Math.min(lot.qty,q);emit(lot,price,e.date,feePer,m);lot.qty-=m;q-=m;if(lot.qty<=1e-9)lots.shift();}
-      if(q>0)lots.push({dir,price,qty:q,feePer,date:e.date,_seq:e._seq,mult,srcId:e.id});
+      if(q>0)lots.push({dir,price,qty:q,feePer,date:e.date,_seq:e._seq,mult,srcId:e.id,account:e.account||""});
     }
-    for(const lot of lots)out.push({id:`fmig_${lot.srcId}_${ctr++}`,_seq:lot._seq,instrument:"future",symbol:sym,
+    for(const lot of lots)out.push({id:`fmig_${lot.srcId}_${ctr++}`,_seq:lot._seq,instrument:"future",symbol:sym,account:lot.account||"",
       direction:lot.dir===1?"long":"short",quantity:lot.qty,entry:lot.price,exit:null,
       multiplier:lot.mult,fees:Math.round(lot.feePer*lot.qty*100)/100,date:lot.date});
   }
@@ -1015,13 +1028,13 @@ function migrateFutures(){
 
 /* ============================ STATE ============================ */
 const LS_KEY="tape.v1";
-let state={trades:[],marks:{},spreads:[],propfirm:[],notes:{},journal:{},chats:[],seq:0,updatedAt:0};
+let state={trades:[],marks:{},spreads:[],propfirm:[],notes:{},journal:{},chats:[],importKeys:{},seq:0,updatedAt:0};
 let demoMode=false,demoBackup=null;   // demo preview never persists to storage or Drive
 const FS_OK = typeof window.showSaveFilePicker==="function";
 let fileHandle=null, fileName="", fileConnected=false, fileWriteTimer=null;
 
 function serialize(){return JSON.stringify(state,null,2);}
-function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.notes=(p.notes&&typeof p.notes==="object")?p.notes:{};state.journal=(p.journal&&typeof p.journal==="object")?p.journal:{};state.chats=Array.isArray(p.chats)?p.chats:[];state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;migrateFutures();return true;}return false;}
+function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.notes=(p.notes&&typeof p.notes==="object")?p.notes:{};state.journal=(p.journal&&typeof p.journal==="object")?p.journal:{};state.chats=Array.isArray(p.chats)?p.chats:[];state.importKeys=(p.importKeys&&typeof p.importKeys==="object")?p.importKeys:{};state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;migrateFutures();return true;}return false;}
 
 function load(){try{const r=localStorage.getItem(LS_KEY);if(r)applyParsed(JSON.parse(r));}catch(e){}}
 function save(){
@@ -2741,12 +2754,18 @@ function parseCSV(text){
   if(cur!==""||row.length){row.push(cur);if(row.some(x=>x.trim()!==""))rows.push(row);}
   return rows;
 }
-const HEAD_ALIASES={date:["date","day","tradedate","datetime"],instrument:["instrument","type","assettype","class","sectype"],
-  symbol:["symbol","ticker","underlying","sym"],account:["account","acct","accountname"],action:["action","side","direction","buysell"],
-  quantity:["quantity","qty","shares","contracts","size","amount"],price:["price","fill","fillprice","premium","avgprice"],
-  fees:["fees","fee","commission","commissions","cost"],expiry:["expiry","expiration","expdate","exp"],
+const HEAD_ALIASES={date:["date","day","tradedate","datetime","timestamp","time","filltime","filledtime","executiontime","exectime","boughttimestamp","entrytime"],
+  instrument:["instrument","assettype","class","sectype","type"],
+  symbol:["symbol","ticker","underlying","sym","contract","product","instrumentname"],account:["account","acct","accountname"],
+  action:["action","side","direction","buysell","bs","b/s","tradeside"],
+  quantity:["quantity","qty","shares","contracts","size","amount","filledqty","fillqty","execqty","filled"],
+  price:["price","fill","fillprice","premium","avgprice","avgfillprice","execprice","tradeprice","priceusd"],
+  fees:["fees","fee","commission","commissions","cost","commissionfee","totalfees"],expiry:["expiry","expiration","expdate","exp"],
   strike:["strike","strikeprice"],optionType:["optiontype","callput","cp","right","putcall"],
-  multiplier:["multiplier","mult","contractmultiplier","pointvalue"]};
+  multiplier:["multiplier","mult","contractmultiplier","pointvalue"],
+  entry:["entryprice","openprice","boughtprice","avgentryprice"],exit:["exitprice","closeprice","soldprice","avgexitprice"],
+  exitDate:["exittime","exitdate","closetime","closedate","soldtimestamp"],mpos:["marketpos","position","longshort"],
+  tradeno:["tradeno","trade","tradenumber","tradeid","id"],pnl:["profit","pnl","netpnl","realizedpnl","profitusd","netprofit"]};
 function mapHeaders(hdr){
   const norm=hdr.map(h=>h.toLowerCase().replace(/[^a-z0-9]/g,""));
   const idx={};
@@ -2762,28 +2781,6 @@ function normInst(v){const s=(v||"").toLowerCase().trim();
   if(s.startsWith("opt")||s==="o")return "option";
   if(s.startsWith("fut")||s==="f")return "future";
   return "stock";}
-function importCSV(text){
-  const rows=parseCSV(text);if(rows.length<2){toast("CSV has no data rows",true);return;}
-  const idx=mapHeaders(rows[0]);
-  if(idx.symbol==null||idx.action==null||idx.quantity==null||idx.price==null){
-    toast("CSV missing required columns (symbol, action, quantity, price)",true);return;}
-  let added=0,skipped=0;
-  for(let i=1;i<rows.length;i++){const r=rows[i];const get=f=>idx[f]!=null?(r[idx[f]]||"").trim():"";
-    const inst=idx.instrument!=null?normInst(get("instrument")):"stock";
-    const sym=get("symbol").toUpperCase();const qty=parseFloat(get("quantity"));const price=parseFloat(get("price"));
-    if(!sym||!(qty>0)||!isFinite(price)){skipped++;continue;}
-    const t={id:"t"+Date.now()+i+Math.random().toString(36).slice(2,5),_seq:state.seq++,
-      date:get("date")||today(),instrument:inst,symbol:sym,account:get("account"),action:normAction(get("action")),
-      quantity:qty,price:price,fees:parseFloat(get("fees"))||0,
-      multiplier:parseFloat(get("multiplier"))||defaultMultiplier(inst,sym)};
-    if(inst==="option"){t.expiry=get("expiry");t.strike=parseFloat(get("strike"))||0;
-      const ot=get("optionType").toLowerCase();t.optionType=ot.startsWith("p")?"put":"call";}
-    state.trades.push(t);added++;}
-  migrateFutures();
-  save();refreshAll();
-  $("#csvNote").innerHTML=`<span class="pos">Imported ${added}</span>${skipped?` · <span class="neg">skipped ${skipped}</span>`:""}`;
-  toast(`Imported ${added} trade${added!==1?"s":""}`+(skipped?`, skipped ${skipped}`:""));
-}
 function csvTemplate(){
   const h="date,instrument,symbol,account,action,quantity,price,fees,expiry,strike,optionType,multiplier\n";
   const ex=[
@@ -2795,6 +2792,195 @@ function csvTemplate(){
     "2024-03-05,future,ES,,sell,1,5192.00,2.50,,,,50",
   ].join("\n");
   download("trading-ledger_template.csv",h+ex+"\n","text/csv");
+}
+
+/* ================= PLATFORM IMPORT (prop firm / broker exports) =================
+   TradeZella-style ingestion without a server: the trader exports trade history from
+   their platform (Tradovate, NinjaTrader, Rithmic, TradingView, generic fills) and
+   drops the file here. We detect the shape, normalize to this app's trades, preview,
+   and dedupe on committed fills so re-importing an overlapping export is safe. */
+function cleanNum(v){if(v==null)return NaN;let s=String(v).replace(/[$,\s]/g,"");
+  const par=/^\((.*)\)$/.exec(s);if(par)s="-"+par[1];return parseFloat(s);}
+// "MESU5", "MES 09-25", "/ESZ25", "@NQ" → futures root + flag
+function futSym(raw){
+  let s=String(raw||"").toUpperCase().trim().replace(/^[/@]/,"");
+  let isFut=false;
+  const sp=/^([A-Z0-9]{1,6})\s+\d{2}-\d{2}$/.exec(s);           // NinjaTrader "MES 09-25"
+  if(sp){s=sp[1];isFut=true;}
+  const mc=/^([A-Z]{1,4}\d?)[FGHJKMNQUVXZ]\d{1,2}$/.exec(s);     // month code: MESU5, 6EZ25
+  if(mc&&(FUTURES_PRESETS[mc[1]]!=null||mc[1].length<=3)){s=mc[1];isFut=true;}
+  if(FUTURES_PRESETS[s]!=null)isFut=true;
+  return {sym:s,isFut};
+}
+// timestamps: ISO, "MM/DD/YYYY HH:MM:SS AM", "M/D/YY" → {date:"YYYY-MM-DD", t:epoch|null}
+function parseWhen(v){
+  const s=String(v||"").trim();if(!s)return {date:"",t:null};
+  let m=/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(s);
+  if(m){const d=new Date(+m[1],+m[2]-1,+m[3],+(m[4]||0),+(m[5]||0),+(m[6]||0));
+    return {date:`${m[1]}-${m[2]}-${m[3]}`,t:d.getTime()};}
+  m=/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:[ ,]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?/i.exec(s);
+  if(m){let y=+m[3];if(y<100)y+=2000;let h=+(m[4]||0);
+    if(m[7]&&/pm/i.test(m[7])&&h<12)h+=12;if(m[7]&&/am/i.test(m[7])&&h===12)h=0;
+    const d=new Date(y,+m[1]-1,+m[2],h,+(m[5]||0),+(m[6]||0));
+    return {date:`${y}-${String(m[1]).padStart(2,"0")}-${String(m[2]).padStart(2,"0")}`,t:d.getTime()};}
+  return {date:"",t:null};
+}
+function importKeyExec(f){return ["x",f.date,f.tt||"",f.symbol,f.action,f.quantity,f.price].join("|");}
+function importKeyRT(f){return ["r",f.date,f.symbol,f.direction,f.quantity,f.entry,f.exit??"",f.exitDate||""].join("|");}
+// per-row instrument when the file doesn't say: futures by contract pattern, OCC options, else stock
+function inferInst(symRaw,instVal){
+  const iv=(instVal||"").toLowerCase();
+  if(/opt/.test(iv))return {inst:"option",sym:String(symRaw||"").toUpperCase().trim()};
+  if(/fut/.test(iv))return {inst:"future",sym:futSym(symRaw).sym};
+  if(/stock|equity|etf|shs|share/.test(iv))return {inst:"stock",sym:String(symRaw||"").toUpperCase().trim()};
+  const occ=/^([A-Z.]{1,6})\s*(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/.exec(String(symRaw||"").toUpperCase().replace(/\s+/g," ").trim());
+  if(occ)return {inst:"option",sym:occ[1],expiry:`20${occ[2]}-${occ[3]}-${occ[4]}`,
+    optionType:occ[5]==="P"?"put":"call",strike:+occ[6]/1000};
+  const f=futSym(symRaw);
+  if(f.isFut)return {inst:"future",sym:f.sym};
+  return {inst:"stock",sym:String(symRaw||"").toUpperCase().trim()};
+}
+function analyzeImportCSV(text){
+  const rows=parseCSV(text);if(rows.length<2)return {error:"No data rows found."};
+  const idx=mapHeaders(rows[0]);
+  const norm=rows[0].map(h=>String(h).toLowerCase().replace(/[^a-z0-9]/g,""));
+  const get=(r,f)=>idx[f]!=null?String(r[idx[f]]||"").trim():"";
+  const body=rows.slice(1).filter(r=>r.some(c=>String(c).trim()!==""));
+  const out=[],warn=[];let skipped=0;
+  // ---- shape B: TradingView "List of Trades" — paired Entry/Exit rows per trade # ----
+  const typeCol=norm.findIndex(h=>h==="type");
+  const isTV=idx.tradeno!=null&&typeCol>=0&&body.some(r=>/^(entry|exit)\s/i.test(String(r[typeCol]||"")));
+  if(isTV){
+    const groups={};
+    for(const r of body){const k=get(r,"tradeno")||"?";(groups[k]=groups[k]||[]).push(r);}
+    for(const k of Object.keys(groups)){
+      const g=groups[k];
+      const en=g.find(r=>/^entry/i.test(String(r[typeCol]||"")));
+      const ex=g.find(r=>/^exit/i.test(String(r[typeCol]||"")));
+      if(!en){skipped++;continue;}
+      const dir=/short/i.test(String(en[typeCol]))?"short":"long";
+      const wEn=parseWhen(get(en,"date")),wEx=ex?parseWhen(get(ex,"date")):{date:"",t:null};
+      const qty=Math.abs(cleanNum(get(en,"quantity")))||1;
+      const sym=get(en,"symbol");
+      out.push({kind:"rt",instrument:"future",symbol:sym?futSym(sym).sym:"",direction:dir,
+        quantity:qty,entry:cleanNum(get(en,"price")),exit:ex?cleanNum(get(ex,"price")):null,
+        date:wEn.date||today(),exitDate:wEx.date||"",tt:wEn.t,fees:0,needsSym:!sym});
+    }
+    const needSymbol=out.some(x=>x.needsSym);
+    return {format:"TradingView list of trades",trades:out,skipped,warnings:warn,needSymbol};
+  }
+  // ---- shape A: round-trip rows (NinjaTrader trade performance & friends) ----
+  if(idx.entry!=null&&idx.exit!=null){
+    for(const r of body){
+      const symIn=get(r,"symbol")||get(r,"instrument");
+      if(!symIn){skipped++;continue;}
+      const info=inferInst(symIn,idx.symbol!=null?get(r,"instrument"):"");
+      const entry=cleanNum(get(r,"entry")),exit=cleanNum(get(r,"exit"));
+      const qty=Math.abs(cleanNum(get(r,"quantity")))||0;
+      if(!(qty>0)||!isFinite(entry)){skipped++;continue;}
+      const mposRaw=get(r,"mpos")||get(r,"action");
+      const dir=/short|sell|sld|s\b/i.test(mposRaw)?"short":"long";
+      const wEn=parseWhen(get(r,"date")),wEx=parseWhen(get(r,"exitDate"));
+      if(info.inst==="future"){
+        out.push({kind:"rt",instrument:"future",symbol:info.sym,direction:dir,quantity:qty,
+          entry,exit:isFinite(exit)?exit:null,date:wEn.date||today(),exitDate:wEx.date||"",
+          tt:wEn.t,fees:cleanNum(get(r,"fees"))||0});
+      }else{ // non-futures round trips → two executions so FIFO matching stays canonical
+        const fee=cleanNum(get(r,"fees"))||0;
+        const base={kind:"exec",instrument:info.inst,symbol:info.sym,quantity:qty,
+          expiry:info.expiry,strike:info.strike,optionType:info.optionType};
+        out.push({...base,action:dir==="long"?"buy":"sell",price:entry,date:wEn.date||today(),tt:wEn.t,fees:fee/2});
+        if(isFinite(exit))out.push({...base,action:dir==="long"?"sell":"buy",price:exit,
+          date:wEx.date||wEn.date||today(),tt:wEx.t,fees:fee/2});
+      }
+    }
+    return {format:"round-trip trade report",trades:out,skipped,warnings:warn,needSymbol:false};
+  }
+  // ---- shape C: fills / executions (Tradovate, Rithmic, generic) ----
+  if(idx.symbol==null||idx.quantity==null||idx.price==null)
+    return {error:"Couldn't recognize this file — need at least symbol/contract, quantity and price columns."};
+  for(const r of body){
+    const symIn=get(r,"symbol");if(!symIn){skipped++;continue;}
+    const info=inferInst(symIn,get(r,"instrument"));
+    let qty=cleanNum(get(r,"quantity"));const price=cleanNum(get(r,"price"));
+    if(!qty||!isFinite(price)){skipped++;continue;}
+    let action=idx.action!=null?normAction(get(r,"action")):(qty<0?"sell":"buy");
+    if(idx.action==null&&qty<0)action="sell";
+    qty=Math.abs(qty);
+    const w=parseWhen(get(r,"date"));
+    const f={kind:"exec",instrument:info.inst,symbol:info.sym,action,quantity:qty,price,
+      date:w.date||today(),tt:w.t,fees:cleanNum(get(r,"fees"))||0,account:get(r,"account"),
+      mult:cleanNum(get(r,"multiplier"))||null};
+    if(info.inst==="option"){f.expiry=info.expiry||get(r,"expiry");f.strike=info.strike??(cleanNum(get(r,"strike"))||0);
+      f.optionType=info.optionType||((get(r,"optionType").toLowerCase().startsWith("p"))?"put":"call");}
+    out.push(f);
+  }
+  if(!out.length)return {error:"No usable rows — check that quantity and price columns have numbers."};
+  if(out.some(f=>!f.date))warn.push("some rows had no date; today's date was used");
+  return {format:"fills / executions",trades:out,skipped,warnings:warn,needSymbol:false};
+}
+let pendingImport=null;
+function importCSV(text){
+  const res=analyzeImportCSV(text);
+  const box=$("#csvPreview");
+  if(res.error){pendingImport=null;box.innerHTML="";toast(res.error,true);$("#csvNote").innerHTML=`<span class="neg">${esc(res.error)}</span>`;return;}
+  pendingImport=res;$("#csvNote").textContent="";
+  const dupes=res.trades.filter(f=>state.importKeys[f.kind==="rt"?importKeyRT(f):importKeyExec(f)]).length;
+  const bySym={};for(const f of res.trades)bySym[f.symbol||"?"]=(bySym[f.symbol||"?"]||0)+1;
+  const symLine=Object.keys(bySym).sort((a,b)=>bySym[b]-bySym[a]).slice(0,6).map(k=>`${k}×${bySym[k]}`).join(" · ");
+  const prev=res.trades.slice(0,10).map(f=>f.kind==="rt"
+    ?`<tr><td class="l">${f.date}</td><td class="l"><span class="badge future">future</span></td><td class="l">${esc(f.symbol||"?")}</td><td class="l">${f.direction}</td><td>${fmtNum(f.quantity)}</td><td>${fmtNum(f.entry)} <span class="mut">→</span> ${f.exit==null?'<span class="mut">open</span>':fmtNum(f.exit)}</td><td class="mut">${f.fees?fmtMoney(f.fees):"—"}</td></tr>`
+    :`<tr><td class="l">${f.date}</td><td class="l"><span class="badge ${f.instrument}">${f.instrument}</span></td><td class="l">${esc(f.symbol)}</td><td class="l">${f.action}</td><td>${fmtNum(f.quantity)}</td><td>${fmtNum(f.price)}</td><td class="mut">${f.fees?fmtMoney(f.fees):"—"}</td></tr>`).join("");
+  box.innerHTML=`<div class="plat-prev">
+    <div class="pp-head">Detected <b>${esc(res.format)}</b> · ${res.trades.length} trade${res.trades.length!==1?"s":""}
+      ${dupes?` · <span class="neg">${dupes} already imported</span>`:""}
+      ${res.skipped?` · <span class="mut">${res.skipped} rows skipped</span>`:""}</div>
+    ${symLine?`<div class="pp-syms mut">${esc(symLine)}</div>`:""}
+    ${res.warnings.length?`<div class="pp-warn">⚠ ${esc(res.warnings.join(" · "))}</div>`:""}
+    <div class="tablewrap"><table class="pp-table"><thead><tr><th class="l">Date</th><th class="l">Inst</th><th class="l">Symbol</th><th class="l">Side</th><th>Qty</th><th>Price</th><th>Fees</th></tr></thead><tbody>${prev}</tbody></table></div>
+    ${res.trades.length>10?`<div class="mut" style="font-size:11px">…and ${res.trades.length-10} more</div>`:""}
+    <div class="row" style="margin-top:10px">
+      ${res.needSymbol?`<div class="field"><label>Symbol <span class="neg">(required — this export doesn't name it)</span></label><input type="text" id="ppSym" placeholder="MES" style="text-transform:uppercase"></div>`:""}
+      <div class="field"><label>Account label <span class="mut">(optional — e.g. Topstep 50k)</span></label><input type="text" id="ppAcct" list="acctList"></div>
+      <button class="btn" id="ppImport">Import ${res.trades.length-dupes>0?res.trades.length-dupes:0} new</button>
+      <button class="btn ghost" id="ppCancel">Cancel</button>
+    </div></div>`;
+  $("#ppImport").onclick=commitImport;
+  $("#ppCancel").onclick=()=>{pendingImport=null;box.innerHTML="";};
+}
+function commitImport(){
+  if(!pendingImport)return;
+  const res=pendingImport;
+  const acct=(($("#ppAcct")||{}).value||"").trim();
+  const symIn=(($("#ppSym")||{}).value||"").toUpperCase().trim();
+  if(res.needSymbol&&!symIn){toast("Enter the symbol this export traded",true);return;}
+  const list=res.trades.slice().sort((a,b)=>(a.tt||0)-(b.tt||0));
+  let added=0,dupes=0;
+  for(const f of list){
+    if(f.needsSym)f.symbol=symIn;
+    const key=f.kind==="rt"?importKeyRT(f):importKeyExec(f);
+    if(state.importKeys[key]){dupes++;continue;}
+    state.importKeys[key]=1;
+    if(f.kind==="rt"){
+      state.trades.push({id:"t"+Date.now()+added+Math.random().toString(36).slice(2,5),_seq:state.seq++,
+        date:f.date,instrument:"future",symbol:f.symbol,account:acct||f.account||"",
+        direction:f.direction,quantity:f.quantity,entry:f.entry,exit:f.exit,exitDate:f.exitDate||"",
+        fees:f.fees||0,multiplier:defaultMultiplier("future",f.symbol)});
+    }else{
+      const t={id:"t"+Date.now()+added+Math.random().toString(36).slice(2,5),_seq:state.seq++,
+        date:f.date,instrument:f.instrument,symbol:f.symbol,account:acct||f.account||"",
+        action:f.action,quantity:f.quantity,price:f.price,fees:f.fees||0,
+        multiplier:f.mult||defaultMultiplier(f.instrument,f.symbol)};
+      if(f.instrument==="option"){t.expiry=f.expiry||"";t.strike=f.strike||0;t.optionType=f.optionType||"call";}
+      state.trades.push(t);
+    }
+    added++;
+  }
+  migrateFutures();                    // futures executions pair FIFO into round trips
+  pendingImport=null;$("#csvPreview").innerHTML="";
+  save();refreshAll();
+  $("#csvNote").innerHTML=`<span class="pos">Imported ${added}</span>${dupes?` · <span class="mut">${dupes} duplicates skipped</span>`:""}`;
+  toast(`Imported ${added} trade${added!==1?"s":""}`+(dupes?`, skipped ${dupes} duplicates`:""));
 }
 
 /* ============================ EXPORT / IMPORT ============================ */
