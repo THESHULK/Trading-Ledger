@@ -236,6 +236,8 @@ svg.chart{width:100%;display:block;overflow:visible}
 .sd-pos .legs.good{color:#22c55e;font-weight:700}
 .sd-pos .legs.bad{color:#ff4d4d;font-weight:700}
 .sd-pos .exp{color:var(--faint);font-size:11px;white-space:nowrap}
+.sd-pos .pacct{font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--blue,#7aa2f7);
+  border:1px solid var(--line);border-radius:999px;padding:1px 8px;white-space:nowrap}
 .sd-pos .pm{color:var(--green);white-space:nowrap}
 /* mobile: three calm lines per position instead of one wrapping jumble */
 @media(max-width:680px){
@@ -3299,7 +3301,8 @@ function sellDashMetrics(sps){
   let mostSym="—",mostN=0;for(const k in bySym)if(bySym[k]>mostN){mostN=bySym[k];mostSym=k;}
   // one row per open spread so each can show its own strikes, expiry and edit button
   const posRows=openSp.map(s=>({id:s.id,sym:(s.symbol||"?").toUpperCase(),type:s.type,qty:num(s.quantity),
-    prem:spreadNetOpen(s)*num(s.quantity)*100,expiry:s.expiry||"",legs:s.legs||[]})).sort((a,b)=>b.prem-a.prem);
+    prem:spreadNetOpen(s)*num(s.quantity)*100,expiry:s.expiry||"",legs:s.legs||[],account:(s.account||"").trim()}))
+    .sort((a,b)=>b.prem-a.prem);
   return {realized,collected,openPrem,realByMo,creditByMo,monthsCount,curMo,
     realizedMo:realByMo[curMo]||0,collectedMo:creditByMo[curMo]||0,
     avgMonthly:realized/monthsCount,avgCollected:collected/monthsCount,
@@ -3378,7 +3381,7 @@ function renderSellDash(){
     const expOpen=expiredOpen(p.expiry,true);
     return `<div class="prow${expOpen?" expired":""}">`+
       `<div class="pmain"><span class="sym">${p.sym}</span><span class="legs${cls}"${note}>${legs}</span></div>`+
-      `<div class="pmeta"><span class="ptype">${typeName(p.type)}</span><span class="exp">${p.expiry||"—"} · ${fmtDte(daysToExp(p.expiry),true)}</span></div>`+
+      `<div class="pmeta"><span class="ptype">${typeName(p.type)}</span>${p.account?`<span class="pacct" title="Account">${esc(p.account)}</span>`:""}<span class="exp">${p.expiry||"—"} · ${fmtDte(daysToExp(p.expiry),true)}</span></div>`+
       `<div class="pfoot"><span class="pm">QTY ${fmtNum(p.qty)} · ${money(p.prem)}</span><span class="pacts">`+
       noteBtn(p.id,"sd-note")+
       `<button class="iconbtn sd-roll" data-sroll="${attr(p.id)}" title="Roll to a new strike / expiry">roll</button>`+
@@ -3505,7 +3508,7 @@ function openRoll(kind,id){
     if(t.instrument!=="option"){toast("Only option trades can be rolled",true);return;}
     rollCtx={kind,id,t};
     const short=t.action==="sell";
-    $("#rollSub").innerHTML=`<span class="rollcur">${t.symbol} ${t.expiry||""} ${fmtNum(t.strike)}${(t.optionType||"")[0]?.toUpperCase()||""} · ${short?"SHORT":"LONG"} ${fmtNum(t.quantity)} @ ${fmtNum(t.price)}</span>`;
+    $("#rollSub").innerHTML=`<span class="rollcur">${t.symbol} ${t.expiry||""} ${fmtNum(t.strike)}${(t.optionType||"")[0]?.toUpperCase()||""} · ${short?"SHORT":"LONG"} ${fmtNum(t.quantity)} @ ${fmtNum(t.price)}${t.account?` · <b>${esc(t.account)}</b>`:""}</span>`;
     $("#rollBody").innerHTML=`
       <div class="rollsec"><h4>Close the current option</h4>
         <div class="rollgrid">
@@ -3529,7 +3532,7 @@ function openRoll(kind,id){
     const sp=state.spreads.find(x=>x.id===id);
     if(!sp){toast("Position not found",true);return;}
     rollCtx={kind,id,sp};
-    $("#rollSub").innerHTML=`<span class="rollcur">${sp.symbol} ${(SPREAD_TYPES[sp.type]&&SPREAD_TYPES[sp.type].name)||sp.type||""} · ${sp.legs.map(rollLegTag).join(" / ")} · exp ${sp.expiry||"—"} · qty ${fmtNum(sp.quantity)}</span>`;
+    $("#rollSub").innerHTML=`<span class="rollcur">${sp.symbol} ${(SPREAD_TYPES[sp.type]&&SPREAD_TYPES[sp.type].name)||sp.type||""} · ${sp.legs.map(rollLegTag).join(" / ")} · exp ${sp.expiry||"—"} · qty ${fmtNum(sp.quantity)}${sp.account?` · <b>${esc(sp.account)}</b>`:""}</span>`;
     $("#rollBody").innerHTML=`
       <div class="rollsec"><h4>Close the current position</h4>
         ${sp.legs.map((l,i)=>`<div class="rollleg">
