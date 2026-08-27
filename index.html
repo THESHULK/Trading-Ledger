@@ -676,8 +676,8 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <div class="panel" style="padding-bottom:14px">
       <h3>Active Buy-Side Positions <span class="hint">enter a current price to see unrealized P&amp;L · click a column to sort</span></h3>
       <p class="note">Your open stock, option and futures positions. Mark prices are saved locally and used for unrealized P&amp;L across the app. <button class="iconbtn" id="refreshPrices">↻ refresh live stock prices</button> <span class="mut" id="priceStatus"></span></p>
+      <div class="tablewrap" style="margin-top:10px"><table id="posTable"></table></div>
     </div>
-    <div class="tablewrap"><table id="posTable"></table></div>
     <div class="panel">
       <h3 id="formTitle">Add Trade</h3>
       <div class="form" id="addForm">
@@ -713,9 +713,12 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       <input type="file" id="shotFile" accept="image/*" style="display:none">
     </div>
 
-    <p class="note">Single-leg stock/option/future executions plus your sell-side spreads (one summary row each). Trades in prop-firm accounts are kept separate under <b>Prop Firm → Trades</b>. Spread rows are read-only here — use <b>edit ↗</b> to manage them on the Sell-Side tab. <label style="margin-left:6px;cursor:pointer;user-select:none"><input type="checkbox" id="hideSellSide" style="vertical-align:middle"> hide sell-side</label></p>
-    <div class="tradesummary" id="tradeSummary"></div>
-    <div class="tablewrap"><table id="tradeTable"></table></div>
+    <div class="panel" style="padding-bottom:14px">
+      <h3>Trade Ledger <span class="hint">buy-side executions only</span></h3>
+      <p class="note">Single-leg stock, option and futures executions. Sell-side positions live on the <b>Sell Side</b> tab; prop-account trades under <b>Prop Firm → Trades</b>.</p>
+      <div class="tradesummary" id="tradeSummary" style="margin-top:2px"></div>
+      <div class="tablewrap" style="margin-top:10px"><table id="tradeTable"></table></div>
+    </div>
   </section>
 
   <!-- POSITIONS -->
@@ -2279,7 +2282,6 @@ function aiMemoryBlock(){
 
 /* ============================ TRADES TABLE ============================ */
 let editId=null;
-let hideSellSide=false;
 /* ---- theme ---- */
 function applyTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem("tape_theme",t);}catch(e){}}
 /* ---- live stock prices (best-effort; Yahoo Finance via CORS fallbacks) ---- */
@@ -2515,7 +2517,7 @@ function renderTradesTable(cfg){
       c==="pl"?(closed?spreadRealized(o):null):"";
   };
   const items=scoped.map(o=>({k:"trade",o}));
-  if(cfg.prop||!hideSellSide)items.push(...state.spreads.filter(inScope).map(o=>({k:"spread",o})));
+  if(cfg.prop)items.push(...state.spreads.filter(inScope).map(o=>({k:"spread",o})));   // sell-side rows appear only in the prop ledger; personal ones live on the Sell Side tab
   const kinds={instrument:"select",account:"select",symbol:"text",action:"select",strike:"text",dte:"text",expiry:"text"};
   const distinct={instrument:distinctVals(items,it=>gv(it,"instrument")),account:distinctVals(items,it=>gv(it,"account")),action:distinctVals(items,it=>gv(it,"action"))};
   const rows=items.filter(it=>rowPasses(c=>gv(it,c),kinds,cfg.filters))
@@ -3574,6 +3576,8 @@ function setSecOpen(panel,open,persist){
   const h3=[...panel.children].find(c=>c.tagName==="H3");if(!h3)return;
   panel.classList.toggle("collapsed",!open);
   h3.setAttribute("aria-expanded",open?"true":"false");
+  // wide tables can't be measured while hidden — refit any that just became visible
+  if(open)["#tradeTable","#propTradeTable"].forEach(t=>{if(panel.querySelector(t))fitWideTable(t);});
   if(persist){const k=panel.dataset.sec;if(open)delete collapsedSecs[k];else collapsedSecs[k]=1;saveCollapsed();}
 }
 function initCollapsible(){
@@ -3937,7 +3941,6 @@ function init(){
   const hasFiles=e=>e.dataTransfer&&Array.from(e.dataTransfer.types||[]).includes("Files");
   window.addEventListener("dragover",e=>{if(hasFiles(e))e.preventDefault();});
   window.addEventListener("drop",e=>{if(hasFiles(e)&&!(e.target.closest&&e.target.closest(".dropzone")))e.preventDefault();});
-  $("#hideSellSide").onchange=e=>{hideSellSide=e.target.checked;renderTrades();};
   $("#tickerLookup").oninput=e=>{tickerQ=e.target.value;if(dashData)drawByTicker(dashData.allRealized,dashData.allPos);};
   populateSpreadTypes();resetSpreadForm();
   $("#sp-type").onchange=renderLegInputs;
