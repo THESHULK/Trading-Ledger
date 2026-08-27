@@ -522,8 +522,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
   </div>
   <nav id="nav">
     <button data-v="dash" class="on">Dashboard</button>
-    <button data-v="trades">Trades</button>
-    <button data-v="positions">Positions</button>
+    <button data-v="trades">Buy Side</button>
     <button data-v="spreads">Sell Side</button>
     <button data-v="journal">Journal</button>
     <button data-v="prop">Prop Firm</button>
@@ -674,6 +673,11 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 
   <!-- TRADES -->
   <section class="view" id="view-trades">
+    <div class="panel" style="padding-bottom:14px">
+      <h3>Active Buy-Side Positions <span class="hint">enter a current price to see unrealized P&amp;L · click a column to sort</span></h3>
+      <p class="note">Your open stock, option and futures positions. Mark prices are saved locally and used for unrealized P&amp;L across the app. <button class="iconbtn" id="refreshPrices">↻ refresh live stock prices</button> <span class="mut" id="priceStatus"></span></p>
+    </div>
+    <div class="tablewrap"><table id="posTable"></table></div>
     <div class="panel">
       <h3 id="formTitle">Add Trade</h3>
       <div class="form" id="addForm">
@@ -715,14 +719,6 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
   </section>
 
   <!-- POSITIONS -->
-  <section class="view" id="view-positions">
-    <div class="panel" style="padding-bottom:14px">
-      <h3>Open Positions <span class="hint">enter a current price to see unrealized P&amp;L · click a column to sort</span></h3>
-      <p class="note">Mark prices are saved locally and used for unrealized P&amp;L across the app. <button class="iconbtn" id="refreshPrices">↻ refresh live stock prices</button> <span class="mut" id="priceStatus"></span></p>
-    </div>
-    <div class="tablewrap"><table id="posTable"></table></div>
-  </section>
-
   <!-- SELL SIDE -->
   <section class="view" id="view-spreads">
     <div id="sellDash"></div>
@@ -822,6 +818,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
         <div class="row" style="margin-top:6px">
           <input type="text" id="pfAcctNew" placeholder="add account label…" list="acctList" style="max-width:220px">
           <button class="iconbtn" id="pfAcctAdd">mark as prop</button>
+          <label class="pf-acct" title="When on, prop-account trades count in the dashboard, journal, ledgers and AI data — everywhere"><input type="checkbox" id="includePropAll"> include prop trades in all calculations</label>
         </div>
       </div>
     </div>
@@ -913,7 +910,8 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <h2 id="wnTitle">What's new<span class="tick">Aug 2026</span></h2>
     <p class="lead">A lot has landed since your last visit:</p>
     <ul class="feat">
-      <li><span class="ic">🏦</span><span><b>Prop firm separation</b> — mark accounts as prop (Prop Firm tab): their trades get their own <b>Trades</b> sub-tab and stay out of your personal P/L; only payouts &amp; fees count.</span></li>
+      <li><span class="ic">🧭</span><span><b>Buy Side tab</b> — Trades and Positions merged: your active buy-side positions now sit above the trade ledger on one tab.</span></li>
+      <li><span class="ic">🏦</span><span><b>Prop firm separation</b> — mark accounts as prop (Prop Firm tab): their trades get their own <b>Trades</b> sub-tab and stay out of your personal P/L, journal and dashboard; only payouts &amp; fees count. A global switch there can include them everywhere instead.</span></li>
       <li><span class="ic">📥</span><span><b>Platform imports</b> — drop in Tradovate (fills or position history), NinjaTrader, Rithmic or TradingView exports; auto-detected, previewed, duplicates skipped.</span></li>
       <li><span class="ic">🔁</span><span><b>Roll button</b> on open options &amp; sell-side positions — close the old contract and open the new one in one step, with live credit/debit math.</span></li>
       <li><span class="ic">📓</span><span><b>Journaling</b> — a Journal tab with a month calendar and daily P/L, plus a <b>note</b> button on every trade.</span></li>
@@ -1453,14 +1451,19 @@ function expiredOpen(expiry,isOpen){if(!isOpen||!expiry)return false;const d=day
 let instF="all",fromD="",toD="";
 let dashData=null;   // last computed dashboard aggregates, reused by the AI analyzer
 // prop-firm accounts: their trades are the FIRM's money, analyzed separately — only the
-// payouts/fees logged on the Prop Firm tab count toward the trader's actual P/L
+// payouts/fees logged on the Prop Firm tab count toward the trader's actual P/L.
+// The global include-prop switch collapses that separation for every calculation.
+let includePropAll=(()=>{try{return localStorage.getItem("tape_include_prop")==="1";}catch(e){return false;}})();
+function setIncludeProp(on){includePropAll=!!on;try{localStorage.setItem("tape_include_prop",on?"1":"0");}catch(e){}}
 function isPropAcct(a){return !!state.propAccounts[String(a||"").trim().toLowerCase()];}
+// "should this account's trades be EXCLUDED from personal figures?"
+function excludeProp(a){return !includePropAll&&isPropAcct(a);}
 function setPropAcct(a,on){const k=String(a||"").trim().toLowerCase();if(!k)return;
   if(on)state.propAccounts[k]=1;else delete state.propAccounts[k];}
 function filteredTrades(){
   return state.trades.filter(t=>{
     if(instF==="propfirm"){if(!isPropAcct(t.account))return false;}          // prop view: only prop-account trades
-    else{if(isPropAcct(t.account))return false;                              // personal views: firm money excluded
+    else{if(excludeProp(t.account))return false;                             // personal views: firm money excluded (unless the global switch is on)
       if(instF!=="all"&&t.instrument!==instF)return false;}
     if(fromD&&t.date<fromD)return false;
     if(toD&&t.date>toD)return false;
@@ -1474,7 +1477,7 @@ function renderDash(){
   const {realized,openByKey}=computePnl(expandTrades(trades));
   const pos=openPositions(openByKey,state.marks);
   const spreadsActive=instF==="propfirm"?state.spreads.filter(sp=>isPropAcct(sp.account))
-    :(instF==="all"||instF==="spread")?state.spreads.filter(sp=>!isPropAcct(sp.account)):[];
+    :(instF==="all"||instF==="spread")?state.spreads.filter(sp=>!excludeProp(sp.account)):[];
   const spc=computeSpreads(spreadsActive);
   const spRealized=spc.realized.filter(e=>(!fromD||e.date>=fromD)&&(!toD||e.date<=toD));
   // open spreads: unrealized = net credit/debit collected (− open fees)
@@ -2312,7 +2315,7 @@ async function fetchStockPrices(manual){
     let ok=0;
     for(const sym of syms){const p=await fetchQuote(sym);if(p!=null){state.marks["STK:"+sym]=Math.round(p*100)/100;ok++;}}
     save();
-    if($("#view-positions").classList.contains("on"))renderPositions();
+    if($("#view-trades").classList.contains("on"))renderPositions();
     if($("#view-dash").classList.contains("on"))renderDash();
     if($("#view-spreads").classList.contains("on"))renderSpreads();
     setPriceStatus(ok?`updated ${ok}/${syms.length} · ${new Date().toLocaleTimeString()}`:"couldn't reach price source (offline or blocked)");
@@ -2487,7 +2490,7 @@ function spreadRowHtml(s){
    (#propTradeTable on the Prop Firm tab). P/L matching runs per scope so a symbol traded
    both personally and in a prop account never FIFO-matches across the boundary. */
 function renderTradesTable(cfg){
-  const inScope=o=>cfg.prop?isPropAcct(o.account):!isPropAcct(o.account);
+  const inScope=o=>cfg.prop?isPropAcct(o.account):!excludeProp(o.account);
   const scoped=state.trades.filter(inScope);
   const plByTrade={};
   const _pnl=computePnl(expandTrades(scoped));const openByKey=_pnl.openByKey;
@@ -2551,12 +2554,10 @@ function renderPropTrades(){renderTradesTable({sel:"#propTradeTable",summarySel:
 /* ============================ POSITIONS TABLE ============================ */
 let posSort={col:"unrealized",dir:-1};
 function renderPositions(){
-  const {openByKey}=computePnl(expandTrades(state.trades));
+  // buy-side only: sell-side positions live on the Sell Side tab, prop-account trades under
+  // Prop Firm (unless the global include-prop switch is on)
+  const {openByKey}=computePnl(expandTrades(state.trades.filter(t=>!excludeProp(t.account))));
   let pos=openPositions(openByKey,state.marks);
-  // include open sell-side (spread) positions; their unrealized comes from the legs, not an editable mark
-  for(const sp of (state.spreads||[]).filter(s=>s.status!=="closed")){const q=num(sp.quantity),net=spreadNetOpen(sp);
-    pos.push({key:"SP:"+sp.id,symbol:(sp.symbol||"?").toUpperCase(),instrument:"sell-side",direction:net>=0?"Credit":"Debit",
-      qty:q,avgPrice:net,mark:null,unrealized:net*q*100-num(sp.fees),_sp:sp});}
   const pgv=(p,c)=>p[c];
   const kinds={symbol:"text",instrument:"select",direction:"select"};
   const distinct={instrument:distinctVals(pos,p=>p.instrument),direction:distinctVals(pos,p=>p.direction)};
@@ -2565,18 +2566,9 @@ function renderPositions(){
   const t=$("#posTable");
   const cols=[["symbol","Symbol","l"],["instrument","Type","l"],["direction","Dir","l"],["qty","Qty",""],["avgPrice","Avg Price",""],["mark","Mark",""],["unrealized","Unrealized",""]];
   const head=headFilter(cols,posSort,kinds,posFilters,distinct,false);
-  if(pos.length===0){t.innerHTML=head+`<tbody><tr><td colspan="7"><div class="empty">no open positions match these filters</div></td></tr></tbody>`;wireTable("#posTable",posSort,posFilters,renderPositions,["symbol","instrument","direction"]);return;}
-  const posExpired=p=>p.instrument==="sell-side"?expiredOpen(p._sp&&p._sp.expiry,true)
-    :(p.key||"").startsWith("OPT")?expiredOpen((p.key||"").split(":")[2],true):false;
-  t.innerHTML=head+`<tbody>`+pos.map(p=>p.instrument==="sell-side"?`<tr class="${posExpired(p)?"expired-row":""}">
-    <td class="l">${p.symbol}<span class="mut" style="font-size:10px"> ${p._sp.type||""} ${(p._sp.legs||[]).map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""}${fmtNum(l.strike)}`).join(" / ")}${p._sp.expiry?" · "+p._sp.expiry:""}</span></td>
-    <td class="l"><span class="badge spread">sell-side</span></td>
-    <td class="l ${p.direction==="Credit"?"pos":"neg"}">${p.direction}</td>
-    <td>${fmtNum(p.qty)}</td>
-    <td>${fmtNum(p.avgPrice)}</td>
-    <td class="mut">—</td>
-    <td class="${cls(p.unrealized)}">${fmtSignedColored(p.unrealized).replace("−","-")}</td>
-  </tr>`:`<tr class="${posExpired(p)?"expired-row":""}">
+  if(pos.length===0){t.innerHTML=head+`<tbody><tr><td colspan="7"><div class="empty">no open buy-side positions${Object.keys(posFilters).some(k=>posFilters[k])?" match these filters":""} — closed trades live in the ledger below</div></td></tr></tbody>`;wireTable("#posTable",posSort,posFilters,renderPositions,["symbol","instrument","direction"]);return;}
+  const posExpired=p=>(p.key||"").startsWith("OPT")?expiredOpen((p.key||"").split(":")[2],true):false;
+  t.innerHTML=head+`<tbody>`+pos.map(p=>`<tr class="${posExpired(p)?"expired-row":""}">
     <td class="l">${p.symbol}${p.key.startsWith("OPT")?`<span class="mut" style="font-size:10px"> ${p.key.split(":").slice(2).join(" ")}</span>`:""}${posExpired(p)?' <span class="dte-exp">EXPIRED</span>':""}</td>
     <td class="l"><span class="badge ${p.instrument}">${p.instrument}</span></td>
     <td class="l ${p.direction==="Long"?"pos":"neg"}">${p.direction}</td>
@@ -3275,7 +3267,7 @@ function sdWireCharts(){
 function moTag(v,invert){const cl=(invert?-v:v)>=0?"pos":"neg";return `<span class="${cl}">${fmtSignedColored(v).replace("−","-")} mo</span>`;}
 function renderSellDash(){
   const box=$("#sellDash");if(!box)return;
-  const sps=state.spreads||[];
+  const sps=(state.spreads||[]).filter(sp=>!excludeProp(sp.account));
   if(!sps.length){box.innerHTML="";return;}
   const d=sellDashMetrics(sps);
   const money=v=>fmtMoney(v).replace("−","-");
@@ -3370,7 +3362,7 @@ function renderSpreads(){
     c==="pnl"?(s.status==="closed"?spreadRealized(s):spreadNetOpen(s)*num(s.quantity)*100-num(s.fees)):"";
   const kinds={date:"text",closed:"text",type:"select",symbol:"text",account:"select",exp:"text",strike:"text"};
   const distinct={type:distinctVals(state.spreads,s=>s.type),account:distinctVals(state.spreads,s=>s.account)};
-  const rows=state.spreads.slice().filter(s=>rowPasses(c=>sval(s,c),kinds,spreadFilters))
+  const rows=state.spreads.filter(sp=>!excludeProp(sp.account)).filter(s=>rowPasses(c=>sval(s,c),kinds,spreadFilters))
     .sort((a,b)=>cmpVals(sval(a,spreadSort.col),sval(b,spreadSort.col),spreadSort.dir));
   const t=$("#spreadTable");
   const clS=rows.filter(s=>s.status==="closed"),opS=rows.filter(s=>s.status!=="closed");
@@ -3662,10 +3654,13 @@ function invalidateDayMap(){dayMapCache=null;}
 function journalDayMap(){
   if(dayMapCache)return dayMapCache;
   const map={},get=d=>map[d]||(map[d]={pl:0,closed:0,opened:0});
-  const {realized}=computePnl(expandTrades(state.trades));
+  // prop-account trades are the firm's money — keep them out of the day figures
+  // unless the global include-prop switch is on
+  const trades=(state.trades||[]).filter(t=>!excludeProp(t.account));
+  const {realized}=computePnl(expandTrades(trades));
   for(const r of realized){const d=String(r.date).slice(0,10);if(d){const m=get(d);m.pl+=r.pnl;m.closed++;}}
-  for(const t of (state.trades||[])){const d=String(t.date).slice(0,10);if(d)get(d).opened++;}
-  for(const sp of (state.spreads||[])){
+  for(const t of trades){const d=String(t.date).slice(0,10);if(d)get(d).opened++;}
+  for(const sp of (state.spreads||[]).filter(x=>!excludeProp(x.account))){
     const od=String(sp.dateOpened||"").slice(0,10);if(od)get(od).opened++;
     if(sp.status==="closed"){const cd=String(sp.dateClosed||"").slice(0,10);
       if(cd){const m=get(cd);m.pl+=spreadRealized(sp);m.closed++;}}
@@ -3864,7 +3859,7 @@ const WELCOME_LS="tape_welcomed";
 /* what's-new: bump WHATSNEW_VER when shipping notable changes; returning users see the
    popup once per version. Brand-new users get the welcome modal instead and are marked
    current so they aren't shown "news" about features that were always there for them. */
-const WHATSNEW_VER="2026-08-26",WN_LS="tape_whatsnew";
+const WHATSNEW_VER="2026-08-27",WN_LS="tape_whatsnew";
 function wnSeen(){try{return localStorage.getItem(WN_LS)===WHATSNEW_VER;}catch(e){return true;}}
 function wnMarkSeen(){try{localStorage.setItem(WN_LS,WHATSNEW_VER);}catch(e){}}
 function openWhatsNew(){const o=$("#whatsnewModal");if(o)o.classList.add("show");}
@@ -3875,11 +3870,11 @@ function closeWelcome(){const o=$("#welcomeModal");if(o)o.classList.remove("show
 function switchView(v){
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
   document.querySelectorAll(".view").forEach(s=>s.classList.toggle("on",s.id==="view-"+v));
-  if(v==="dash")renderDash();if(v==="trades")renderTrades();if(v==="positions")renderPositions();if(v==="spreads")renderSpreads();if(v==="prop")renderProp();
+  if(v==="dash")renderDash();if(v==="trades"){renderTrades();renderPositions();}if(v==="spreads")renderSpreads();if(v==="prop")renderProp();
   if(v==="journal")renderJournal();
   if(v==="data")$("#countNote").textContent=`${state.trades.length} trades · ${state.spreads.length} sell-side · ${state.propfirm.length} prop firm · ${journalCount()} journal · ${Object.keys(state.marks).length} marks stored`;
   // pull underlying prices for the sell-side ITM colouring if any open symbol is unpriced
-  if((v==="spreads"||v==="positions")&&!fetchingPrices&&(state.spreads||[]).some(s=>s.status!=="closed"&&(s.symbol||"").trim()&&state.marks["STK:"+(s.symbol||"").toUpperCase().trim()]==null))fetchStockPrices(false);
+  if((v==="spreads"||v==="trades")&&!fetchingPrices&&(state.spreads||[]).some(s=>s.status!=="closed"&&(s.symbol||"").trim()&&state.marks["STK:"+(s.symbol||"").toUpperCase().trim()]==null))fetchStockPrices(false);
 }
 function refreshAccounts(){const el=$("#acctList");if(!el)return;
   const accts=[...new Set([...state.trades,...state.spreads].map(x=>(x.account||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
@@ -3957,6 +3952,9 @@ function init(){
     $("#propPaneTrades").style.display=b.dataset.pt==="trades"?"":"none";
     if(b.dataset.pt==="trades")renderPropTrades();
   });
+  $("#includePropAll").checked=includePropAll;
+  $("#includePropAll").onchange=e=>{setIncludeProp(e.target.checked);refreshAll();
+    toast(e.target.checked?"Prop trades now count in all calculations":"Prop trades kept separate again");};
   $("#pfAcctAdd").onclick=()=>{const v=$("#pfAcctNew").value.trim();if(!v)return;
     setPropAcct(v,true);$("#pfAcctNew").value="";save();refreshAll();toast(`${v} marked as a prop account`);};
   $("#cancelPf").onclick=resetPfForm;
