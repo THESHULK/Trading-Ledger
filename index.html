@@ -673,11 +673,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 
   <!-- TRADES -->
   <section class="view" id="view-trades">
-    <div class="panel" style="padding-bottom:14px">
-      <h3>Active Buy-Side Positions <span class="hint">enter a current price to see unrealized P&amp;L · click a column to sort</span></h3>
-      <p class="note">Your open stock, option and futures positions. Mark prices are saved locally and used for unrealized P&amp;L across the app. <button class="iconbtn" id="refreshPrices">↻ refresh live stock prices</button> <span class="mut" id="priceStatus"></span></p>
-      <div class="tablewrap" style="margin-top:10px"><table id="posTable"></table></div>
-    </div>
+    <div id="buyDash"></div>
     <div class="panel">
       <h3 id="formTitle">Add Trade</h3>
       <div class="form" id="addForm">
@@ -2317,7 +2313,7 @@ async function fetchStockPrices(manual){
     let ok=0;
     for(const sym of syms){const p=await fetchQuote(sym);if(p!=null){state.marks["STK:"+sym]=Math.round(p*100)/100;ok++;}}
     save();
-    if($("#view-trades").classList.contains("on"))renderPositions();
+    if($("#view-trades").classList.contains("on"))renderBuyDash();
     if($("#view-dash").classList.contains("on"))renderDash();
     if($("#view-spreads").classList.contains("on"))renderSpreads();
     setPriceStatus(ok?`updated ${ok}/${syms.length} · ${new Date().toLocaleTimeString()}`:"couldn't reach price source (offline or blocked)");
@@ -2544,7 +2540,8 @@ function renderTradesTable(cfg){
     state.spreads=state.spreads.filter(x=>x.id!==b.dataset.sdel);save();refreshAll();toast("Sell-side trade deleted");});
   t.querySelectorAll("[data-sedit]").forEach(b=>b.onclick=()=>loadSpreadEdit(b.dataset.sedit));
 }
-function renderTrades(){renderTradesTable({sel:"#tradeTable",summarySel:"#tradeSummary",sort:tradeSort,filters:tradeFilters,
+function renderTrades(){renderBuyDash();
+  renderTradesTable({sel:"#tradeTable",summarySel:"#tradeSummary",sort:tradeSort,filters:tradeFilters,
   rerender:renderTrades,prop:false,label:"All trades",
   empty:"no trades match — adjust filters, add one above, or import a CSV"});}
 function renderPropTrades(){renderTradesTable({sel:"#propTradeTable",summarySel:"#propTradeSummary",sort:propTradeSort,filters:propTradeFilters,
@@ -2552,6 +2549,83 @@ function renderPropTrades(){renderTradesTable({sel:"#propTradeTable",summarySel:
   empty:"no prop-account trades yet — tick an account under “Prop trading accounts”, or check “prop firm account” when importing"});
   const n=state.trades.filter(t=>isPropAcct(t.account)).length+state.spreads.filter(x=>isPropAcct(x.account)).length;
   const b=$("#ppTabTrades");if(b)b.textContent=`Trades${n?` (${n})`:""}`;}
+
+/* ==================== BUY-SIDE DASHBOARD (mirrors the sell-side § sections) ==================== */
+function buyDashMetrics(){
+  const mon=s=>String(s||"").slice(0,7);
+  const trades=state.trades.filter(t=>!excludeProp(t.account));
+  const {realized,openByKey}=computePnl(expandTrades(trades));
+  const pos=openPositions(openByKey,state.marks);
+  let realTotal=0,wins=0,losses=0,best=null,worst=null;
+  const realByMo={},cntByMo={};
+  for(const r of realized){realTotal+=r.pnl;
+    if(r.pnl>0)wins++;else if(r.pnl<0)losses++;
+    if(!best||r.pnl>best.pnl)best=r;if(!worst||r.pnl<worst.pnl)worst=r;
+    const m=mon(r.date);if(m){realByMo[m]=(realByMo[m]||0)+r.pnl;cntByMo[m]=(cntByMo[m]||0)+1;}}
+  let unTotal=0,unKnown=false;
+  for(const p of pos)if(p.unrealized!=null){unTotal+=p.unrealized;unKnown=true;}
+  const monthsCount=Math.max(1,Object.keys(realByMo).length),curMo=today().slice(0,7);
+  const inst={stock:0,option:0,future:0},symCnt={};
+  for(const t of trades){if(inst[t.instrument]!=null)inst[t.instrument]++;
+    const sy=(t.symbol||"").toUpperCase();if(sy)symCnt[sy]=(symCnt[sy]||0)+1;}
+  const mostSym=Object.keys(symCnt).sort((a,b)=>symCnt[b]-symCnt[a])[0]||"—";
+  return {realTotal,realizedMo:realByMo[curMo]||0,unTotal,unKnown,openCount:pos.length,
+    avgMonthly:realTotal/monthsCount,monthsCount,realByMo,cntByMo,
+    closedN:realized.length,winRate:(wins+losses)?Math.round(wins/(wins+losses)*100):0,
+    best,worst,mostSym,mostN:symCnt[mostSym]||0,tradesAll:trades.length,inst};
+}
+function renderBuyDash(){
+  const box=$("#buyDash");if(!box)return;
+  const d=buyDashMetrics();
+  box.innerHTML=`<div class="sd">
+    <div class="tip" id="bdTip"></div>
+    <div class="sd-group" data-sdsec="01">
+    <div class="sd-sec"><span class="hash">§ 01</span><b>SUMMARY</b><span class="secarrow" aria-hidden="true">▼</span></div>
+    <div class="sd-body">
+    <div class="sd-tiles">
+      <div class="sd-tile"><div class="lbl">Realized P/L</div><div class="big ${cls(d.realTotal)}">${fmtSignedColored(d.realTotal).replace("−","-")}</div><div class="mo">${moTag(d.realizedMo)}</div></div>
+      <div class="sd-tile"><div class="lbl">Unrealized</div><div class="big ${d.unKnown?cls(d.unTotal):"mut"}">${d.unKnown?fmtSignedColored(d.unTotal).replace("−","-"):"—"}</div><div class="mo"><span class="mut">${d.openCount} open position${d.openCount!==1?"s":""}</span></div></div>
+      <div class="sd-tile"><div class="lbl">Avg monthly P/L</div><div class="big ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</div><div class="mo"><span class="mut">over ${d.monthsCount} mo</span></div></div>
+    </div>
+    </div></div>
+    <div class="sd-group" data-sdsec="02">
+    <div class="sd-sec"><span class="hash">§ 02</span><b>PERFORMANCE</b><span class="secarrow" aria-hidden="true">▼</span></div>
+    <div class="sd-body">
+    <div class="sd-charts">
+      <div class="sd-box"><div class="bh"><span>Realized P/L / mo</span></div>
+        <div class="bv"><span class="l ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</span></div>
+        <div class="bsub"><span>avg/mo</span></div>
+        ${sdBarChart(d.realByMo,"no closed trades yet")}</div>
+      <div class="sd-box"><div class="bh"><span>Closed trades / mo</span><span>${d.closedN} total</span></div>
+        <div class="bv"><span class="l">${fmtNum(d.closedN)}</span></div>
+        <div class="bsub"><span>closed all-time</span></div>
+        ${sdBarChart(d.cntByMo,"no closed trades yet",true)}</div>
+    </div>
+    </div></div>
+    <div class="sd-group" data-sdsec="03">
+    <div class="sd-sec"><span class="hash">§ 03</span><b>PORTFOLIO INSIGHTS</b><span class="secarrow" aria-hidden="true">▼</span></div>
+    <div class="sd-body">
+    <div class="sd-insights">
+      <div class="sd-cell"><div class="lbl">Trades all-time</div><div class="big">${d.tradesAll}</div><div class="sub">${d.inst.stock} stk / ${d.inst.option} opt / ${d.inst.future} fut</div></div>
+      <div class="sd-cell"><div class="lbl">Avg monthly P/L</div><div class="big ${cls(d.avgMonthly)}">${fmtSignedColored(d.avgMonthly).replace("−","-")}</div><div class="sub">realized / month</div></div>
+      <div class="sd-cell"><div class="lbl">Win rate</div><div class="big">${d.winRate}%</div><div class="sub">${d.closedN} closed trades</div></div>
+      <div class="sd-cell"><div class="lbl">Open positions</div><div class="big">${d.openCount}</div><div class="sub">currently open</div></div>
+      <div class="sd-cell"><div class="lbl">Best / worst trade</div><div class="big">${d.best?fmtSignedColored(d.best.pnl).replace("−","-"):"—"} / ${d.worst?fmtSignedColored(d.worst.pnl).replace("−","-"):"—"}</div><div class="sub">${d.best?d.best.symbol:"—"} / ${d.worst?d.worst.symbol:"—"}</div></div>
+      <div class="sd-cell"><div class="lbl">Most traded</div><div class="big">${d.mostSym}</div><div class="sub">${d.mostN} executions</div></div>
+    </div>
+    </div></div>
+    <div class="sd-group" data-sdsec="04">
+    <div class="sd-sec"><span class="hash">§ 04</span><b>ACTIVE POSITIONS</b><span class="mut sdcount">${d.openCount}</span><span class="secarrow" aria-hidden="true">▼</span></div>
+    <div class="sd-body">
+    <p class="note" style="margin:0 0 8px">Enter a current price in <b>Mark</b> to see unrealized P&amp;L — saved locally, used across the app. <button class="iconbtn" id="refreshPrices">↻ refresh live stock prices</button> <span class="mut" id="priceStatus"></span></p>
+    <div class="tablewrap"><table id="posTable"></table></div>
+    </div></div>
+  </div>`;
+  sdWireCharts("#buyDash","#bdTip");
+  wireSdGroups(box,"buyside:");
+  $("#refreshPrices").onclick=()=>fetchStockPrices(true);
+  renderPositions();
+}
 
 /* ============================ POSITIONS TABLE ============================ */
 let posSort={col:"unrealized",dir:-1};
@@ -2583,7 +2657,7 @@ function renderPositions(){
   t.querySelectorAll(".markin").forEach(inp=>{
     inp.onchange=()=>{const k=inp.dataset.key;const v=parseFloat(inp.value);
       if(isFinite(v))state.marks[k]=v;else delete state.marks[k];
-      save();renderPositions();renderDash();};
+      save();renderBuyDash();renderDash();};
   });
 }
 
@@ -3234,7 +3308,7 @@ function sellDashMetrics(sps){
     openCount:openSp.length,best,worst,mostSym,mostN,posRows};
 }
 // monthly bar chart; signed=true draws +/- from a centre line, else all bars up from the baseline
-function sdBarChart(byMo,empty){
+function sdBarChart(byMo,empty,numeric){
   const months=sdFillMonths(Object.keys(byMo)).slice(-13);
   const W=560,H=150,pad={l:6,r:6,t:10,b:20};
   if(!months.length)return `<svg viewBox="0 0 ${W} ${H}" class="sd-chart"><text x="${W/2}" y="${H/2}" text-anchor="middle" class="sd-axis">${empty||"no data"}</text></svg>`;
@@ -3242,7 +3316,7 @@ function sdBarChart(byMo,empty){
   const maxA=Math.max(1,...months.map(m=>Math.abs(byMo[m]||0)));
   const bw=(W-pad.l-pad.r)/months.length;let g="";
   const lbl=(m,i)=>{if(months.length>13)return "";const mm=m.split("-")[1];return `<text class="sd-axis" x="${(pad.l+i*bw+bw/2).toFixed(1)}" y="${H-7}" text-anchor="middle">${MON[+mm-1]}</text>`;};
-  const hit=(m,i)=>`<rect class="sdbar" x="${(pad.l+i*bw).toFixed(1)}" y="${pad.t}" width="${bw.toFixed(1)}" height="${(H-pad.t-pad.b).toFixed(1)}" fill="transparent" data-m="${m}" data-v="${byMo[m]||0}" style="cursor:pointer"/>`;
+  const hit=(m,i)=>`<rect class="sdbar" x="${(pad.l+i*bw).toFixed(1)}" y="${pad.t}" width="${bw.toFixed(1)}" height="${(H-pad.t-pad.b).toFixed(1)}" fill="transparent" data-m="${m}" data-v="${byMo[m]||0}"${numeric?' data-n="1"':""} style="cursor:pointer"/>`;
   if(signed){const zero=pad.t+(H-pad.t-pad.b)/2,half=(H-pad.t-pad.b)/2-4;
     g+=`<line x1="${pad.l}" y1="${zero}" x2="${W-pad.r}" y2="${zero}" stroke="var(--line2)"/>`;
     months.forEach((m,i)=>{const v=byMo[m]||0,hh=Math.abs(v)/maxA*half,x=pad.l+i*bw+bw*0.2,w=bw*0.6,y=v>=0?zero-hh:zero;
@@ -3254,16 +3328,32 @@ function sdBarChart(byMo,empty){
   return `<svg viewBox="0 0 ${W} ${H}" class="sd-chart">${g}</svg>`;
 }
 // wire hover/touch tooltips for the sell-side chart bars
-function sdWireCharts(){
-  const sd=$("#sellDash .sd");if(!sd)return;const tip=$("#sdTip");if(!tip)return;
+function sdWireCharts(rootSel,tipSel){
+  const sd=$((rootSel||"#sellDash")+" .sd");if(!sd)return;const tip=$(tipSel||"#sdTip");if(!tip)return;
   sd.querySelectorAll(".sdbar").forEach(b=>{
     const show=(cx,cy)=>{const r=sd.getBoundingClientRect(),[y,mm]=b.dataset.m.split("-");
-      tip.innerHTML=`${MON[+mm-1]} ${y}<br><b>${fmtSignedColored(+b.dataset.v).replace("−","-")}</b>`;
+      tip.innerHTML=`${MON[+mm-1]} ${y}<br><b>${b.dataset.n==="1"?fmtNum(+b.dataset.v):fmtSignedColored(+b.dataset.v).replace("−","-")}</b>`;
       const sx=cx-r.left,sy=cy-r.top;
       tip.style.left=Math.max(2,Math.min(sx-46,r.width-104))+"px";tip.style.top=Math.max(2,sy-48)+"px";tip.style.opacity=1;};
     b.addEventListener("mousemove",e=>show(e.clientX,e.clientY));
     b.addEventListener("mouseleave",()=>tip.style.opacity=0);
     b.addEventListener("touchstart",e=>{const t=e.touches[0];show(t.clientX,t.clientY);clearTimeout(tip._t);tip._t=setTimeout(()=>tip.style.opacity=0,6000);e.preventDefault();},{passive:false});
+  });
+}
+// collapse/expand behaviour for a dashboard's § groups, keyed per dashboard
+function wireSdGroups(box,prefix){
+  loadCollapsed();
+  box.querySelectorAll(".sd-group").forEach(g=>{
+    const key=prefix+g.dataset.sdsec,head=g.querySelector(".sd-sec");
+    if(!head)return;
+    const apply=c=>{g.classList.toggle("collapsed",c);head.setAttribute("aria-expanded",c?"false":"true");};
+    apply(!!collapsedSecs[key]);
+    head.setAttribute("role","button");head.setAttribute("tabindex","0");
+    head.title="Click to collapse / expand";
+    const toggle=()=>{const c=!g.classList.contains("collapsed");apply(c);
+      if(c)collapsedSecs[key]=1;else delete collapsedSecs[key];saveCollapsed();};
+    head.addEventListener("click",toggle);
+    head.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "||e.key==="Spacebar"){e.preventDefault();toggle();}});
   });
 }
 function moTag(v,invert){const cl=(invert?-v:v)>=0?"pos":"neg";return `<span class="${cl}">${fmtSignedColored(v).replace("−","-")} mo</span>`;}
@@ -3340,18 +3430,7 @@ function renderSellDash(){
   </div>`;
   sdWireCharts();
   loadCollapsed();
-  box.querySelectorAll(".sd-group").forEach(g=>{
-    const key="sellside:"+g.dataset.sdsec,head=g.querySelector(".sd-sec");
-    if(!head)return;
-    const apply=c=>{g.classList.toggle("collapsed",c);head.setAttribute("aria-expanded",c?"false":"true");};
-    apply(!!collapsedSecs[key]);
-    head.setAttribute("role","button");head.setAttribute("tabindex","0");
-    head.title="Click to collapse / expand";
-    const toggle=()=>{const c=!g.classList.contains("collapsed");apply(c);
-      if(c)collapsedSecs[key]=1;else delete collapsedSecs[key];saveCollapsed();};
-    head.addEventListener("click",toggle);
-    head.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "||e.key==="Spacebar"){e.preventDefault();toggle();}});
-  });
+  wireSdGroups(box,"sellside:");
   box.querySelectorAll(".sd-edit").forEach(btn=>btn.onclick=()=>loadSpreadEdit(btn.dataset.sedit));
   box.querySelectorAll(".sd-roll").forEach(btn=>btn.onclick=()=>openRoll("spread",btn.dataset.sroll));
   box.querySelectorAll("[data-note]").forEach(btn=>btn.onclick=()=>openNote(btn.dataset.note));
@@ -3964,7 +4043,7 @@ function init(){
   const savedTheme=(()=>{try{return localStorage.getItem("tape_theme");}catch(e){return null;}})()||"oa";
   document.documentElement.dataset.theme=savedTheme;$("#themeSel").value=savedTheme;
   $("#themeSel").onchange=e=>applyTheme(e.target.value);
-  $("#refreshPrices").onclick=()=>fetchStockPrices(true);
+  // #refreshPrices lives inside the buy-side dashboard and is wired on each render
   $("#csvPick").onclick=()=>$("#csvFile").click();
   $("#csvFile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
     rd.onload=()=>importCSV(rd.result);rd.readAsText(f);e.target.value="";};
