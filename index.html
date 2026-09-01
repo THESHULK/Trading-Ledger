@@ -713,7 +713,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 
     <div class="panel" style="padding-bottom:14px">
       <h3>Trade Ledger <span class="hint">buy-side executions only</span></h3>
-      <p class="note">Single-leg stock, option and futures executions. Sell-side positions live on the <b>Sell Side</b> tab; prop-account trades under <b>Prop Firm → Trades</b>.</p>
+      <p class="note">Single-leg stock, option and futures trades. Sell-side positions live on the <b>Sell Side</b> tab; prop-account trades under <b>Prop Firm → Trades</b>. <label style="margin-left:6px;cursor:pointer;user-select:none"><input type="checkbox" id="groupRT" style="vertical-align:middle"> one row per round trip</label></p>
       <div class="tradesummary" id="tradeSummary" style="margin-top:2px"></div>
       <div class="tablewrap" style="margin-top:10px"><table id="tradeTable"></table></div>
     </div>
@@ -1016,16 +1016,18 @@ function computePnl(trades){
       const mult=num(e.multiplier,defaultMultiplier(e.instrument,e.symbol))||1;meta.multiplier=mult;
       const execDir=e.action==="buy"?1:-1;const fee=num(e.fees);const cf=q0?fee/q0:0;let q=q0;
       const sameDir=lots.length===0||lots[0].dir===execDir;
-      if(sameDir){lots.push({remaining:q,price:num(e.price),feePerUnit:cf,dir:execDir,date:e.date});continue;}
+      if(sameDir){lots.push({remaining:q,price:num(e.price),feePerUnit:cf,dir:execDir,date:e.date,srcId:e.id});continue;}
       while(q>0&&lots.length>0&&lots[0].dir!==execDir){
         const lot=lots[0];const matched=Math.min(lot.remaining,q);const lotDir=lot.dir;
         const perUnit=(num(e.price)-lot.price)*lotDir*mult;
-        realized.push({date:e.date,key,closeId:e.id,symbol:meta.symbol,instrument:meta.instrument,account:e.account||"",qty:matched,
+        realized.push({date:e.date,key,closeId:e.id,openId:lot.srcId,openDate:lot.date,
+          symbol:meta.symbol,instrument:meta.instrument,account:e.account||"",qty:matched,
           openPrice:lot.price,closePrice:num(e.price),dir:lotDir,
+          fees:Math.round((lot.feePerUnit+cf)*matched*100)/100,
           pnl:perUnit*matched-lot.feePerUnit*matched-cf*matched});
         lot.remaining-=matched;q-=matched;if(lot.remaining<=1e-9)lots.shift();
       }
-      if(q>0)lots.push({remaining:q,price:num(e.price),feePerUnit:cf,dir:execDir,date:e.date});
+      if(q>0)lots.push({remaining:q,price:num(e.price),feePerUnit:cf,dir:execDir,date:e.date,srcId:e.id});
     }
     if(lots.length>0)openByKey[key]={...meta,dir:lots[0].dir,lots};
   }
@@ -2330,6 +2332,7 @@ function thCells(cols,sort){const a=c=>sort.col===c?(sort.dir<0?" ▼":" ▲"):"
 function wireSort(sel,sort,reRender,ascCols){$(sel).querySelectorAll("th[data-col]").forEach(th=>th.onclick=()=>{
   const c=th.dataset.col;if(sort.col===c)sort.dir*=-1;else{sort.col=c;sort.dir=(ascCols&&ascCols.indexOf(c)>=0)?1:-1;}reRender();});}
 let tradeSort={col:"date",dir:-1},spreadSort={col:"date",dir:-1},propSort={col:"date",dir:-1},propTradeSort={col:"date",dir:-1};
+let groupRT=(()=>{try{return localStorage.getItem("tape_group_rt")!=="0";}catch(e){return true;}})();
 /* ---- per-column filters (spreadsheet style) ---- */
 let _ff=null; // pending refocus after re-render
 const tradeFilters={},spreadFilters={},propFilters={},posFilters={},propTradeFilters={};
@@ -2391,7 +2394,8 @@ function renderTradeSummary(rows,plByTrade,sel,filters,label){
   let realTotal=0,closed=0,spOpenUn=0,spOpenCount=0;
   const tradeObjs=[];
   for(const it of rows){
-    if(it.k==="trade"){
+    if(it.k==="rtx"){realTotal+=it.o.pnl;closed++;}
+    else if(it.k==="trade"){
       tradeObjs.push(it.o);
       const pl=plByTrade[it.o.id];
       if(pl!=null){realTotal+=pl;closed++;}
@@ -2464,6 +2468,27 @@ function tradeRowHtml(t,pl,isOpen){
         ${noteBtn(t.id)}
         <button class="iconbtn del" data-del="${t.id}">del</button></td>
   </tr>`;}
+// one completed round trip (a FIFO match of an opening and a closing execution) as a single row
+function rtRowHtml(r){
+  const long=r.dir===1;
+  return `<tr>
+    <td class="l">${r.date}</td>
+    <td class="l">${r.closed}</td>
+    <td class="l"><span class="badge ${r.instrument}">${r.instrument}</span></td>
+    <td class="l">${r.symbol||""}</td>
+    <td class="l">${r.account?esc(r.account):'<span class="mut">—</span>'}</td>
+    <td><span class="mut">—</span></td>
+    <td>${r.instrument==="option"&&r.expiry?r.expiry:'<span class="mut">—</span>'}</td>
+    <td>${r.instrument==="option"&&r.strike!==""?`${r.strike}${r.optionType?" "+r.optionType[0].toUpperCase():""}`:'<span class="mut">—</span>'}</td>
+    <td class="l"><span class="badge ${long?"buy":"sell"}">${long?"LONG":"SHORT"}</span></td>
+    <td>${fmtNum(r.qty)}</td>
+    <td>${fmtNum(r.openPrice)} <span class="mut">→</span> ${fmtNum(r.closePrice)}</td>
+    <td class="mut">${r.fees?fmtMoney(r.fees):"—"}</td>
+    <td class="${cls(r.pnl)}">${fmtSignedColored(r.pnl)}</td>
+    <td><button class="iconbtn" data-edit="${attr(r.closeId)}" title="Edit the closing execution (grouped row — untick 'one row per round trip' to manage each execution)">edit</button>
+        ${noteBtn(r.closeId)}</td>
+  </tr>`;
+}
 function spreadRowHtml(s){
   const closed=s.status==="closed",netO=spreadNetOpen(s),pl=closed?spreadRealized(s):null;
   const legtxt=s.legs.map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""} ${fmtNum(l.strike)}`).join(" / ");
@@ -2495,8 +2520,27 @@ function renderTradesTable(cfg){
   const plByTrade={};
   const _pnl=computePnl(expandTrades(scoped));const openByKey=_pnl.openByKey;
   for(const r of _pnl.realized){plByTrade[r.closeId]=(plByTrade[r.closeId]||0)+r.pnl;}
+  // one row per round trip: each FIFO match becomes a single entry (open→close), and raw
+  // executions are shown only while something is still open on them. Futures RT rows and
+  // spread rows already are single entries.
+  let rtRows=[];const openIds=new Set();
+  if(groupRT){
+    for(const k of Object.keys(openByKey))for(const l of (openByKey[k].lots||[]))
+      if(l.remaining>1e-9&&l.srcId)openIds.add(String(l.srcId).split(":")[0]);
+    rtRows=_pnl.realized.filter(r=>r.instrument!=="future").map(r=>{
+      const kp=String(r.key||"").split(":");
+      return {k:"rtx",o:{id:r.closeId,closeId:r.closeId,openId:r.openId,date:r.openDate||r.date,closed:r.date,
+        instrument:r.instrument,symbol:r.symbol,account:r.account||"",dir:r.dir,qty:r.qty,
+        openPrice:r.openPrice,closePrice:r.closePrice,fees:r.fees||0,pnl:r.pnl,
+        expiry:r.instrument==="option"?(kp[2]||""):"",strike:r.instrument==="option"?(kp[3]||""):"",
+        optionType:r.instrument==="option"?(kp[4]||""):"",_seq:0}};});
+  }
   // unified accessor over a tagged item {k:'trade'|'spread', o:obj}
   const gv=(it,c)=>{const o=it.o;
+    if(it.k==="rtx")return c==="date"?o.date:c==="closed"?o.closed:c==="instrument"?o.instrument:c==="symbol"?o.symbol:c==="account"?(o.account||""):
+      c==="action"?(o.dir===1?"long":"short"):
+      c==="dte"?null:c==="expiry"?(o.expiry||""):c==="strike"?(o.strike??""):
+      c==="quantity"?o.qty:c==="price"?o.openPrice:c==="mult"?1:c==="fees"?(o.fees||0):c==="pl"?o.pnl:"";
     if(it.k==="trade"&&isFutureRT(o))return c==="date"?o.date:c==="closed"?(o.exitDate||""):c==="instrument"?"future":c==="symbol"?o.symbol:c==="account"?(o.account||""):c==="action"?(o.direction||""):
       c==="dte"?null:c==="expiry"?"":c==="strike"?"":c==="quantity"?o.quantity:c==="price"?num(o.entry):c==="mult"?(o.multiplier??defaultMultiplier("future",o.symbol)):c==="fees"?(o.fees||0):
       c==="pl"?(plByTrade[o.id]??null):"";
@@ -2514,7 +2558,9 @@ function renderTradesTable(cfg){
       c==="quantity"?o.quantity:c==="price"?spreadNetOpen(o):c==="mult"?100:c==="fees"?(o.fees||0):
       c==="pl"?(closed?spreadRealized(o):null):"";
   };
-  const items=scoped.map(o=>({k:"trade",o}));
+  const items=(groupRT
+    ?scoped.filter(o=>isFutureRT(o)||openIds.has(o.id)).map(o=>({k:"trade",o})).concat(rtRows)
+    :scoped.map(o=>({k:"trade",o})));
   if(cfg.prop)items.push(...state.spreads.filter(inScope).map(o=>({k:"spread",o})));   // sell-side rows appear only in the prop ledger; personal ones live on the Sell Side tab
   const kinds={instrument:"select",account:"select",symbol:"text",action:"select",strike:"text",dte:"text",expiry:"text"};
   const distinct={instrument:distinctVals(items,it=>gv(it,"instrument")),account:distinctVals(items,it=>gv(it,"account")),action:distinctVals(items,it=>gv(it,"action"))};
@@ -2525,7 +2571,7 @@ function renderTradesTable(cfg){
   const cols=[["date","Date","l"],["closed","Closed","l"],["instrument","Instrument","l"],["symbol","Symbol","l"],["account","Account","l"],["dte","DTE",""],["expiry","Expiry",""],["strike","Strike",""],["action","Side","l"],["quantity","Qty",""],["price","Price",""],["fees","Fees",""],["pl","Realized P/L",""]];
   const head=headFilter(cols,cfg.sort,kinds,cfg.filters,distinct,true);
   if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="14"><div class="empty">${cfg.empty}</div></td></tr></tbody>`;wireTable(cfg.sel,cfg.sort,cfg.filters,cfg.rerender,["instrument","symbol","action","account","strike"]);fitWideTable(cfg.sel);return;}
-  t.innerHTML=head+`<tbody>`+rows.map(it=>it.k==="trade"?tradeRowHtml(it.o,plByTrade[it.o.id],tradeOpen(it.o,plByTrade[it.o.id],openByKey)):spreadRowHtml(it.o)).join("")+`</tbody>`;
+  t.innerHTML=head+`<tbody>`+rows.map(it=>it.k==="rtx"?rtRowHtml(it.o):it.k==="trade"?tradeRowHtml(it.o,plByTrade[it.o.id],tradeOpen(it.o,plByTrade[it.o.id],openByKey)):spreadRowHtml(it.o)).join("")+`</tbody>`;
   wireTable(cfg.sel,cfg.sort,cfg.filters,cfg.rerender,["instrument","symbol","action","account","strike"]);
   fitWideTable(cfg.sel);
   t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
@@ -2691,7 +2737,7 @@ function loadEdit(id){
   syncFormFields();
   $("#formTitle").textContent="Edit Trade";$("#saveTrade").textContent="Save Changes";
   $("#cancelEdit").style.display="";
-  switchView("trades");window.scrollTo({top:0,behavior:"smooth"});
+  switchView("trades");scrollToForm("#formTitle");
 }
 function resetForm(){
   editId=null;$("#f-sym").value="";$("#f-qty").value="";$("#f-price").value="";$("#f-fees").value="";
@@ -2840,7 +2886,7 @@ async function importShot(file){
     const d=await aiVisionExtract(dataUrl,SHOT_PROMPT);
     prefillTradeFromShot(d);
     st.innerHTML=`<span class="pos">✓ Filled from screenshot — check the fields, then Save.</span>`;
-    window.scrollTo({top:0,behavior:"smooth"});$("#f-sym").focus();
+    scrollToForm("#formTitle");$("#f-sym").focus();
   }catch(err){st.textContent="";toast("Screenshot import failed: "+(err&&err.msg?err.msg:err),true);}
   finally{dz&&dz.classList.remove("busy");}
 }
@@ -4062,6 +4108,10 @@ function init(){
   $("#noteDelete").onclick=deleteNote;
   $("#noteModal").addEventListener("click",e=>{if(e.target===$("#noteModal"))closeNote();});
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#noteModal").classList.contains("show"))closeNote();});
+  $("#groupRT").checked=groupRT;
+  $("#groupRT").onchange=e=>{groupRT=e.target.checked;
+    try{localStorage.setItem("tape_group_rt",groupRT?"1":"0");}catch(x){}
+    renderTrades();renderPropTrades();};
   initCollapsible();
   $("#j-date").value=today();
   $("#j-date").onchange=()=>{jcalMonth=jSelectedDate().slice(0,7);loadDayEntry();renderJournal();};
