@@ -956,6 +956,26 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
   </div>
 </div>
 
+<div class="modal-overlay" id="closeModal">
+  <div class="modal rollm" role="dialog" aria-modal="true" aria-labelledby="closeTitle">
+    <h2 id="closeTitle">Close position</h2>
+    <p class="lead" id="closeSub"></p>
+    <div class="rollsec"><h4>Closing details</h4>
+      <div class="rollgrid">
+        <div class="field"><label id="cl-priceLbl">Close price</label><input type="number" step="any" id="cl-price" placeholder="0.00"></div>
+        <div class="field"><label>Quantity</label><input type="number" step="any" min="0" id="cl-qty"></div>
+        <div class="field"><label>Close date</label><input type="date" id="cl-date"></div>
+        <div class="field"><label>Close fees</label><input type="number" step="any" id="cl-fees" placeholder="0"></div>
+      </div>
+    </div>
+    <div class="rollcalc" id="closeCalc"></div>
+    <div class="modal-btns">
+      <button class="btn primary" id="closeGo">Close position</button>
+      <button class="btn ghost" id="closeCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="rollModal">
   <div class="modal rollm" role="dialog" aria-modal="true" aria-labelledby="rollTitle">
     <h2 id="rollTitle">Roll position</h2>
@@ -2445,6 +2465,7 @@ function tradeRowHtml(t,pl,isOpen){
     <td class="mut">${t.fees?fmtMoney(t.fees):"—"}</td>
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="open futures position — P/L is realized when you set an exit price">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-edit="${t.id}">edit</button>
+        ${open?`<button class="iconbtn" data-closet="${t.id}" title="Set the exit — closes this futures position">close</button>`:""}
         ${noteBtn(t.id)}
         <button class="iconbtn del" data-del="${t.id}">del</button></td>
   </tr>`;}
@@ -2465,6 +2486,7 @@ function tradeRowHtml(t,pl,isOpen){
     <td class="${pl==null?'mut':cls(pl)}">${pl==null?'<span class="mut" title="opening trade — P/L is realized when it is closed">—</span>':fmtSignedColored(pl)}</td>
     <td><button class="iconbtn" data-edit="${t.id}">edit</button>
         ${t.instrument==="option"&&isOpen?`<button class="iconbtn roll" data-roll="${t.id}" title="Roll to a new strike / expiry">roll</button>`:""}
+        ${isOpen?`<button class="iconbtn" data-closet="${t.id}" title="Close this position — writes the closing trade for you">close</button>`:""}
         ${noteBtn(t.id)}
         <button class="iconbtn del" data-del="${t.id}">del</button></td>
   </tr>`;}
@@ -2581,6 +2603,9 @@ function renderTradesTable(cfg){
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadEdit(b.dataset.edit));
   t.querySelectorAll("[data-roll]").forEach(b=>b.onclick=()=>openRoll("trade",b.dataset.roll));
   t.querySelectorAll("[data-note]").forEach(b=>b.onclick=()=>openNote(b.dataset.note));
+  t.querySelectorAll("[data-closet]").forEach(b=>b.onclick=()=>{
+    const tr=state.trades.find(x=>x.id===b.dataset.closet);if(!tr)return;
+    openCloseDlg(isFutureRT(tr)?"future":"trade",tr.id);});
   t.querySelectorAll("[data-sroll]").forEach(b=>b.onclick=()=>openRoll("spread",b.dataset.sroll));
   t.querySelectorAll("[data-sdel]").forEach(b=>b.onclick=()=>{
     const sp=state.spreads.find(x=>x.id===b.dataset.sdel);
@@ -2688,9 +2713,9 @@ function renderPositions(){
   pos=pos.filter(p=>rowPasses(c=>pgv(p,c),kinds,posFilters));
   pos.sort((a,b)=>cmpVals(pgv(a,posSort.col),pgv(b,posSort.col),posSort.dir));
   const t=$("#posTable");
-  const cols=[["symbol","Symbol","l"],["instrument","Type","l"],["direction","Dir","l"],["qty","Qty",""],["avgPrice","Avg Price",""],["mark","Mark",""],["unrealized","Unrealized",""]];
+  const cols=[["symbol","Symbol","l"],["instrument","Type","l"],["direction","Dir","l"],["qty","Qty",""],["avgPrice","Avg Price",""],["mark","Mark",""],["unrealized","Unrealized",""],["act","","l"]];
   const head=headFilter(cols,posSort,kinds,posFilters,distinct,false);
-  if(pos.length===0){t.innerHTML=head+`<tbody><tr><td colspan="7"><div class="empty">no open buy-side positions${Object.keys(posFilters).some(k=>posFilters[k])?" match these filters":""} — closed trades live in the ledger below</div></td></tr></tbody>`;wireTable("#posTable",posSort,posFilters,renderPositions,["symbol","instrument","direction"]);return;}
+  if(pos.length===0){t.innerHTML=head+`<tbody><tr><td colspan="8"><div class="empty">no open buy-side positions${Object.keys(posFilters).some(k=>posFilters[k])?" match these filters":""} — closed trades live in the ledger below</div></td></tr></tbody>`;wireTable("#posTable",posSort,posFilters,renderPositions,["symbol","instrument","direction"]);return;}
   const posExpired=p=>(p.key||"").startsWith("OPT")?expiredOpen((p.key||"").split(":")[2],true):false;
   t.innerHTML=head+`<tbody>`+pos.map(p=>`<tr class="${posExpired(p)?"expired-row":""}">
     <td class="l">${p.symbol}${p.key.startsWith("OPT")?`<span class="mut" style="font-size:10px"> ${p.key.split(":").slice(2).join(" ")}</span>`:""}${posExpired(p)?' <span class="dte-exp">EXPIRED</span>':""}</td>
@@ -2700,8 +2725,18 @@ function renderPositions(){
     <td>${fmtNum(p.avgPrice)}</td>
     <td><input class="markin mono" type="number" step="any" value="${p.mark??""}" placeholder="—" data-key="${p.key}"></td>
     <td class="${p.unrealized==null?'mut':cls(p.unrealized)}">${p.unrealized==null?"—":fmtSignedColored(p.unrealized).replace("−","-")}</td>
+    <td class="l"><button class="iconbtn" data-close-key="${attr(p.key)}" title="Close this position — writes the closing trade for you">close</button></td>
   </tr>`).join("")+`</tbody>`;
   wireTable("#posTable",posSort,posFilters,renderPositions,["symbol","instrument","direction"]);
+  t.querySelectorAll("[data-close-key]").forEach(b=>b.onclick=()=>{
+    const key=b.dataset.closeKey;
+    if(key.startsWith("FUT:")){
+      // futures live as round-trip records; close the record itself
+      const open=state.trades.filter(x=>isFutureRT(x)&&!excludeProp(x.account)&&(x.symbol||"").toUpperCase()===key.slice(4)&&!(x.exit!=null&&x.exit!==""&&isFinite(num(x.exit))));
+      if(open.length===1)openCloseDlg("future",open[0].id);
+      else toast(open.length?"Several open entries for this future — use close on the ledger row":"Position not open",true);
+      return;}
+    openCloseDlg("key",key);});
   t.querySelectorAll(".markin").forEach(inp=>{
     inp.onchange=()=>{const k=inp.dataset.key;const v=parseFloat(inp.value);
       if(isFinite(v))state.marks[k]=v;else delete state.marks[k];
@@ -3733,6 +3768,97 @@ function initCollapsible(){
   });
 }
 
+/* ============================ CLOSE POSITION ============================ */
+/* One-click close: prefill the position, ask only for price/qty/date/fees, and write the
+   closing entry — an opposing execution for stocks/options (the FIFO matcher pairs it and
+   the grouped ledger shows one round-trip row), or the exit on a futures record. */
+let closeCtx=null;
+function closeScopeTrades(account){const prop=isPropAcct(account);
+  return state.trades.filter(t=>prop?isPropAcct(t.account):!excludeProp(t.account));}
+function openCloseDlg(kind,id){
+  const box=$("#closeModal");if(!box)return;closeCtx=null;
+  if(kind==="future"){
+    const t=state.trades.find(x=>x.id===id);
+    if(!t||!isFutureRT(t)||(t.exit!=null&&t.exit!==""&&isFinite(num(t.exit)))){toast("Position not open",true);return;}
+    closeCtx={mode:"fut",t};
+    $("#closeTitle").textContent="Close futures position";
+    $("#cl-priceLbl").textContent="Exit price";
+    $("#closeSub").innerHTML=`<span class="rollcur">${t.symbol} · ${(t.direction||"long").toUpperCase()} ${fmtNum(t.quantity)} @ ${fmtNum(t.entry)}${t.account?` · <b>${esc(t.account)}</b>`:""}</span>`;
+    $("#cl-qty").value=t.quantity;
+  }else{
+    // kind "trade": an open execution row; kind "key": a row of the positions table (personal scope)
+    let acct="",key=id,lotFilter=null;
+    if(kind==="trade"){const t=state.trades.find(x=>x.id===id);if(!t)return;
+      acct=t.account||"";key=positionKey(t);lotFilter=String(id);}
+    const {openByKey}=computePnl(expandTrades(closeScopeTrades(acct)));
+    const p=openByKey[key];
+    if(!p||!p.lots.some(l=>l.remaining>1e-9)){toast("Position not open",true);return;}
+    const lots=p.lots.filter(l=>l.remaining>1e-9);
+    // the account written on the close comes from the newest open lot's own execution
+    const lastSrc=state.trades.find(x=>x.id===String(lots[lots.length-1].srcId||"").split(":")[0]);
+    const kp=String(key).split(":");
+    closeCtx={mode:"exec",key,lots,dir:p.dir,mult:p.multiplier||1,
+      instrument:p.instrument,symbol:p.symbol,account:(lastSrc&&lastSrc.account)||acct||"",
+      expiry:p.instrument==="option"?(kp[2]||""):"",strike:p.instrument==="option"?(kp[3]||""):"",
+      optionType:p.instrument==="option"?(kp[4]||"call"):""};
+    const qtyDefault=lotFilter?lots.filter(l=>String(l.srcId||"").split(":")[0]===lotFilter).reduce((a,l)=>a+l.remaining,0)||lots.reduce((a,l)=>a+l.remaining,0)
+                              :lots.reduce((a,l)=>a+l.remaining,0);
+    $("#closeTitle").textContent="Close position";
+    $("#cl-priceLbl").textContent=p.instrument==="option"?"Close premium (per share)":"Close price";
+    $("#closeSub").innerHTML=`<span class="rollcur">${p.symbol}${p.instrument==="option"?` ${closeCtx.expiry} ${fmtNum(closeCtx.strike)}${(closeCtx.optionType||"")[0]?.toUpperCase()||""}`:""} · ${p.dir===1?"LONG":"SHORT"} ${fmtNum(lots.reduce((a,l)=>a+l.remaining,0))} @ avg ${fmtNum(lots.reduce((a,l)=>a+l.remaining*l.price,0)/lots.reduce((a,l)=>a+l.remaining,0))}${closeCtx.account?` · <b>${esc(closeCtx.account)}</b>`:""}</span>`;
+    $("#cl-qty").value=Math.round(qtyDefault*1e6)/1e6;
+  }
+  $("#cl-price").value="";$("#cl-fees").value="";$("#cl-date").value=today();
+  updateCloseCalc();
+  box.classList.add("show");
+  setTimeout(()=>{const e=$("#cl-price");if(e)e.focus();},30);
+}
+function closeCloseDlg(){const b=$("#closeModal");if(b)b.classList.remove("show");closeCtx=null;}
+// FIFO-accurate preview: consume the open lots in order, matching what the matcher will realize
+function closePreviewPnl(price,qty,fees){
+  if(closeCtx.mode==="fut"){const t=closeCtx.t,q=Math.min(qty,num(t.quantity));
+    const dir=t.direction==="short"?-1:1,mult=num(t.multiplier,defaultMultiplier("future",t.symbol))||1;
+    return (price-num(t.entry))*dir*mult*q-(num(t.fees)*q/num(t.quantity)||0)-fees;}
+  let left=qty,pl=0;
+  for(const l of closeCtx.lots){if(left<=0)break;const take=Math.min(l.remaining,left);
+    pl+=((price-l.price)*l.dir*closeCtx.mult-l.feePerUnit)*take;left-=take;}
+  return pl-fees;
+}
+function updateCloseCalc(){
+  const box=$("#closeCalc");if(!box||!closeCtx)return;
+  const price=parseFloat($("#cl-price").value),qty=parseFloat($("#cl-qty").value)||0,fees=parseFloat($("#cl-fees").value)||0;
+  if(!isFinite(price)||!(qty>0)){box.innerHTML=`<span class="mut">enter a close price for the realized P/L</span>`;return;}
+  const pl=closePreviewPnl(price,qty,fees);
+  box.innerHTML=`<span>Realized P/L: <b class="${cls(pl)}">${fmtSignedColored(pl).replace("−","-")}</b></span>`;
+}
+function doClosePosition(){
+  if(!closeCtx)return;
+  const price=parseFloat($("#cl-price").value),qty=parseFloat($("#cl-qty").value),fees=parseFloat($("#cl-fees").value)||0;
+  const date=$("#cl-date").value||today();
+  if(!isFinite(price)){toast("Enter the close price",true);return;}
+  if(!(qty>0)){toast("Quantity must be > 0",true);return;}
+  if(!futureDateOK(date))return;
+  if(closeCtx.mode==="fut"){
+    const t=state.trades.find(x=>x.id===closeCtx.t.id);if(!t){closeCloseDlg();return;}
+    const full=num(t.quantity);
+    if(qty>=full-1e-9){t.exit=price;t.exitDate=date;t.fees=Math.round((num(t.fees)+fees)*100)/100;}
+    else{ // partial: split into a closed part and an open remainder
+      const share=num(t.fees)*qty/full;
+      state.trades.push({...t,id:"t"+Date.now()+Math.random().toString(36).slice(2,5),_seq:state.seq++,
+        quantity:qty,exit:price,exitDate:date,fees:Math.round((share+fees)*100)/100});
+      t.quantity=Math.round((full-qty)*1e6)/1e6;t.fees=Math.round((num(t.fees)-share)*100)/100;
+    }
+  }else{
+    const c=closeCtx;
+    const trade={id:"t"+Date.now()+Math.random().toString(36).slice(2,5),_seq:state.seq++,
+      date,instrument:c.instrument,symbol:c.symbol,account:c.account||"",
+      action:c.dir===1?"sell":"buy",quantity:qty,price,fees,multiplier:c.mult};
+    if(c.instrument==="option"){trade.expiry=c.expiry;trade.strike=parseFloat(c.strike)||0;trade.optionType=c.optionType||"call";}
+    state.trades.push(trade);
+  }
+  save();closeCloseDlg();refreshAll();toast("Position closed");
+}
+
 /* ============================ JOURNAL ============================ */
 /* Two kinds of entry, both local-first and included in JSON export:
    state.notes[id]      -> a note attached to one trade or sell-side position
@@ -4122,6 +4248,11 @@ function init(){
   $("#jDelete").onclick=deleteDayEntry;
   $("#j-search").oninput=renderJournal;
   $("#j-kind").onchange=renderJournal;
+  $("#closeGo").onclick=doClosePosition;
+  $("#closeCancel").onclick=closeCloseDlg;
+  ["#cl-price","#cl-qty","#cl-fees"].forEach(sel=>{const e=$(sel);if(e)e.oninput=updateCloseCalc;});
+  $("#closeModal").addEventListener("click",e=>{if(e.target===$("#closeModal"))closeCloseDlg();});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#closeModal").classList.contains("show"))closeCloseDlg();});
   $("#rollGo").onclick=doRoll;
   $("#rollCancel").onclick=closeRoll;
   $("#rollModal").addEventListener("click",e=>{if(e.target===$("#rollModal"))closeRoll();});
