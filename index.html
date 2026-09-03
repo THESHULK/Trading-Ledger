@@ -3545,7 +3545,7 @@ function renderSpreads(){
     `<span class="sep">·</span><span class="openkey">open</span>`;
   const cols=[["date","Opened","l"],["closed","Closed","l"],["type","Type","l"],["symbol","Symbol","l"],["account","Account","l"],["exp","Exp","l"],["strike","Strike",""],["qty","Qty",""],["netOpen","Net Open",""],["netClose","Net Close",""],["pnl","P&L",""]];
   const head=headFilter(cols,spreadSort,kinds,spreadFilters,distinct,true);
-  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="12"><div class="empty">no sell-side trades match these filters</div></td></tr></tbody>`;wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp","strike"]);return;}
+  if(rows.length===0){t.innerHTML=head+`<tbody><tr><td colspan="12"><div class="empty">no sell-side trades match these filters</div></td></tr></tbody>`;wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp","strike"]);fitWideTable("#spreadTable");return;}
   t.innerHTML=head+`<tbody>`+rows.map(s=>{
     const netO=spreadNetOpen(s),netC=spreadNetClose(s),closed=s.status==="closed",pnl=closed?spreadRealized(s):null,un=netO*num(s.quantity)*100-num(s.fees);
     const legtxt=s.legs.map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0].toUpperCase()} ${fmtNum(l.strike)}`).join(" / ");
@@ -3567,6 +3567,7 @@ function renderSpreads(){
           <button class="iconbtn del" data-del="${s.id}">del</button></td>
     </tr>`;}).join("")+`</tbody>`;
   wireTable("#spreadTable",spreadSort,spreadFilters,renderSpreads,["type","symbol","account","exp","strike"]);
+  fitWideTable("#spreadTable");
   t.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{const sp=state.spreads.find(x=>x.id===b.dataset.del);if(!confirmDelete(sp?`this sell-side trade (${(sp.symbol||"?").toUpperCase()})`:"this sell-side trade"))return;state.spreads=state.spreads.filter(x=>x.id!==b.dataset.del);save();refreshAll();toast("Trade deleted");});
   t.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>loadSpreadEdit(b.dataset.edit));
   t.querySelectorAll("[data-sroll]").forEach(b=>b.onclick=()=>openRoll("spread",b.dataset.sroll));
@@ -4279,7 +4280,8 @@ function init(){
   loadToken();updateDriveUI();driveAutoResume();
   $("#clearAll").onclick=()=>{if(confirm("Delete ALL trades and marks? This cannot be undone."))
     {state={trades:[],marks:{},spreads:[],propfirm:[],seq:0};save();refreshAll();toast("All data deleted");}};
-  window.addEventListener("resize",()=>{if($("#view-dash").classList.contains("on"))renderDash();fitWideTable("#tradeTable");});
+  window.addEventListener("resize",()=>{if($("#view-dash").classList.contains("on"))renderDash();
+    ["#tradeTable","#spreadTable","#propTradeTable"].forEach(fitWideTable);});
   switchView("dash");
   fetchStockPrices(false);
 }
