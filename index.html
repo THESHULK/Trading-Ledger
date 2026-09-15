@@ -3559,7 +3559,7 @@ function renderSpreads(){
       <td>${(s.legs||[]).map(l=>l.strike).join(" / ")||'<span class="mut">—</span>'}</td>
       <td>${fmtNum(s.quantity)}</td>
       <td class="${netO>=0?'pos':'neg'}">${netO>=0?"cr ":"db "}${fmtMoney(Math.abs(netO))}</td>
-      <td class="mut">${closed?((netC>=0?"cr ":"db ")+fmtMoney(Math.abs(netC))):"—"}</td>
+      <td class="mut">${closed?((Math.abs(netC)<0.005?"":netC>0?"db ":"cr ")+fmtMoney(Math.abs(netC))):"—"}</td>
       <td class="${closed?cls(pnl):cls(un)}">${closed?fmtSignedColored(pnl).replace("−","-"):fmtSignedColored(un).replace("−","-")+'<div class="legsub">open</div>'}</td>
       <td><button class="iconbtn" data-edit="${s.id}">edit</button>
           ${closed?"":`<button class="iconbtn roll" data-sroll="${s.id}" title="Roll to a new strike / expiry">roll</button>`}
