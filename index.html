@@ -3510,6 +3510,8 @@ function renderSellDash(){
     <div class="sd-sec"><span class="hash">§ 04</span><b>ACTIVE POSITIONS</b><span class="mut sdcount">${d.posRows.length}</span>${(()=>{const n=d.posRows.filter(x=>expiredOpen(x.expiry,true)).length;return n?`<span class="dte-exp">${n} EXPIRED</span>`:"";})()}<span class="secarrow" aria-hidden="true">▼</span></div>
     <div class="sd-body">
     <div class="sd-pos">${posHtml}</div>
+    ${(()=>{const n=(state.spreads||[]).filter(x=>x.status!=="closed"&&excludeProp(x.account)).length;
+      return n?`<p class="note" style="margin:8px 2px 0">${n} more open position${n!==1?"s":""} in prop-firm account${n!==1?"s":""} — see <b>Prop Firm → Trades</b>, or turn on “include prop trades in all calculations” there.</p>`:"";})()}
     </div></div>
   </div>`;
   sdWireCharts();
