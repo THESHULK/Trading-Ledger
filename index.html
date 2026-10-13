@@ -444,6 +444,12 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .iconbtn.note.has{border-color:var(--green-dim);color:var(--green)}
 .sd-pos .sd-note{margin-left:4px}
 .jempty{color:var(--faint);font-size:13px;padding:14px 2px}
+/* ---- adjusted cost basis ---- */
+.cb-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+.cb-table th{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);padding:8px 12px;text-align:right;border-bottom:1px solid var(--line);background:var(--panel)}
+.cb-table td{padding:8px 12px;text-align:right;border-bottom:1px solid var(--line)}
+.cb-table .l{text-align:left}
+.cb-table tr:last-child td{border-bottom:0}
 /* ---- prop account designation ---- */
 .pf-accts{border-top:1px solid var(--line);margin-top:12px;padding:12px 0 10px}
 .pf-accts-head{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:700}
@@ -1161,7 +1167,8 @@ function buildDemoState(){
     legs:[{side:"short",optionType:"put",strike:220,open:3.00,close:null},{side:"long",optionType:"put",strike:215,open:1.20,close:null}]});
   const propfirm=[{id:"demopf1",date:dAgo(115),amount:-150,type:"Eval purchase"},{id:"demopf2",date:dAgo(62),amount:-80,type:"Reset"},
     {id:"demopf3",date:dAgo(40),amount:1200,type:"Payout"},{id:"demopf4",date:dAgo(12),amount:2300,type:"Payout"}];
-  return {trades,spreads,propfirm,marks:{"STK:NVDA":135,"STK:SPY":548},seq,updatedAt:Date.now()};
+  return {trades,spreads,propfirm,marks:{"STK:NVDA":135,"STK:SPY":548},
+    notes:{},journal:{},chats:[],importKeys:{},propAccounts:{},seq,updatedAt:Date.now()};
 }
 function setDemo(on){
   on=!!on;if(on===demoMode)return;
@@ -1478,10 +1485,11 @@ let dashData=null;   // last computed dashboard aggregates, reused by the AI ana
 // The global include-prop switch collapses that separation for every calculation.
 let includePropAll=(()=>{try{return localStorage.getItem("tape_include_prop")==="1";}catch(e){return false;}})();
 function setIncludeProp(on){includePropAll=!!on;try{localStorage.setItem("tape_include_prop",on?"1":"0");}catch(e){}}
-function isPropAcct(a){return !!state.propAccounts[String(a||"").trim().toLowerCase()];}
+function isPropAcct(a){return !!(state.propAccounts||{})[String(a||"").trim().toLowerCase()];}
 // "should this account's trades be EXCLUDED from personal figures?"
 function excludeProp(a){return !includePropAll&&isPropAcct(a);}
 function setPropAcct(a,on){const k=String(a||"").trim().toLowerCase();if(!k)return;
+  state.propAccounts=state.propAccounts||{};
   if(on)state.propAccounts[k]=1;else delete state.propAccounts[k];}
 function filteredTrades(){
   return state.trades.filter(t=>{
@@ -2647,6 +2655,39 @@ function buyDashMetrics(){
     closedN:realized.length,winRate:(wins+losses)?Math.round(wins/(wins+losses)*100):0,
     best,worst,mostSym,mostN:symCnt[mostSym]||0,tradesAll:trades.length,inst};
 }
+/* adjusted cost basis: for each stock you hold, raw average cost minus the net cash all
+   calls and puts on that underlying have produced — buy-side option trades (bought and
+   sold) plus sell-side premiums (credit received, buy-backs paid). Cash view, so an open
+   covered call's credit counts the day you collect it and reverses if you buy it back. */
+function optionCashBySym(){
+  const cash={},add=(sym,v)=>{sym=(sym||"").toUpperCase().trim();if(sym)cash[sym]=(cash[sym]||0)+v;};
+  for(const t of state.trades){
+    if(t.instrument!=="option"||excludeProp(t.account))continue;
+    const mult=num(t.multiplier,100)||100,gross=num(t.price)*num(t.quantity)*mult;
+    add(t.symbol,(t.action==="sell"?gross:-gross)-num(t.fees));
+  }
+  for(const sp of (state.spreads||[])){
+    if(excludeProp(sp.account))continue;
+    const q=num(sp.quantity)*100;let v=-num(sp.fees);
+    for(const l of (sp.legs||[])){
+      const sign=l.side==="short"?1:-1;
+      v+=sign*num(l.open)*q;                       // premium received (short) / paid (long)
+      if(l.close!=null)v-=sign*num(l.close)*q;     // buy-back paid / sold-to-close received
+    }
+    add(sp.symbol,v);
+  }
+  return cash;
+}
+function costBasisRows(){
+  const {openByKey}=computePnl(expandTrades(state.trades.filter(t=>!excludeProp(t.account))));
+  const pos=openPositions(openByKey,state.marks).filter(p=>p.instrument==="stock"&&p.qty>1e-9&&p.direction==="Long");
+  const cash=optionCashBySym();
+  return pos.map(p=>{
+    const oc=cash[p.symbol]||0,adj=p.avgPrice-oc/p.qty;
+    return {sym:p.symbol,qty:p.qty,avg:p.avgPrice,optCash:oc,adj,mark:p.mark,
+      effPl:p.mark!=null?(p.mark-adj)*p.qty:null};
+  }).sort((a,b)=>b.qty*b.avg-a.qty*a.avg);
+}
 function renderBuyDash(){
   const box=$("#buyDash");if(!box)return;
   const d=buyDashMetrics();
@@ -2693,6 +2734,23 @@ function renderBuyDash(){
     <p class="note" style="margin:0 0 8px">Enter a current price in <b>Mark</b> to see unrealized P&amp;L — saved locally, used across the app. <button class="iconbtn" id="refreshPrices">↻ refresh live stock prices</button> <span class="mut" id="priceStatus"></span></p>
     <div class="tablewrap"><table id="posTable"></table></div>
     </div></div>
+    ${(()=>{const cb=costBasisRows();if(!cb.length)return "";
+      return `<div class="sd-group" data-sdsec="05">
+    <div class="sd-sec"><span class="hash">§ 05</span><b>ADJUSTED COST BASIS</b><span class="mut sdcount">${cb.length}</span><span class="secarrow" aria-hidden="true">▼</span></div>
+    <div class="sd-body">
+    <div class="tablewrap"><table class="cb-table"><thead><tr>
+      <th class="l">Symbol</th><th>Shares</th><th>Avg cost</th><th>Options net</th><th>Adj cost / sh</th><th>Mark</th><th>Eff. P/L</th>
+    </tr></thead><tbody>${cb.map(r=>`<tr>
+      <td class="l"><b>${r.sym}</b></td>
+      <td>${fmtNum(r.qty)}</td>
+      <td>${fmtNum(Math.round(r.avg*100)/100)}</td>
+      <td class="${cls(r.optCash)}">${fmtSignedColored(r.optCash).replace("−","-")}</td>
+      <td><b>${fmtNum(Math.round(r.adj*100)/100)}</b></td>
+      <td class="mut">${r.mark!=null?fmtNum(r.mark):"—"}</td>
+      <td class="${r.effPl==null?"mut":cls(r.effPl)}">${r.effPl==null?"—":fmtSignedColored(r.effPl).replace("−","-")}</td>
+    </tr>`).join("")}</tbody></table></div>
+    <p class="note" style="margin:8px 2px 0">Adj cost / sh = average cost minus the net cash from every call and put on that underlying (bought and sold, buy-side and sell-side, fees included — open short premium counts once collected). Eff. P/L = (mark − adjusted cost) × shares: your real position in the stock after option income.</p>
+    </div></div>`;})()}
   </div>`;
   sdWireCharts("#buyDash","#bdTip");
   wireSdGroups(box,"buyside:");
