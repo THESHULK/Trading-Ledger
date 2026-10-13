@@ -2659,32 +2659,31 @@ function buyDashMetrics(){
    calls and puts on that underlying have produced — buy-side option trades (bought and
    sold) plus sell-side premiums (credit received, buy-backs paid). Cash view, so an open
    covered call's credit counts the day you collect it and reverses if you buy it back. */
-function optionCashBySym(){
-  const cash={},add=(sym,v)=>{sym=(sym||"").toUpperCase().trim();if(sym)cash[sym]=(cash[sym]||0)+v;};
-  for(const t of state.trades){
-    if(t.instrument!=="option"||excludeProp(t.account))continue;
-    const mult=num(t.multiplier,100)||100,gross=num(t.price)*num(t.quantity)*mult;
-    add(t.symbol,(t.action==="sell"?gross:-gross)-num(t.fees));
-  }
+function optionCashBySym(realized,openByKey){
+  // split by state so both are visible: realized = P/L locked in on closed options (buy-side
+  // matches + closed sell-side); open = cash currently in/out on positions still working
+  // (short credit collected, long debits paid). realized + open = total option cash.
+  const out={},get=sym=>{sym=(sym||"").toUpperCase().trim();return sym?(out[sym]=out[sym]||{real:0,open:0}):null;};
+  for(const r of realized)if(r.instrument==="option"){const g=get(r.symbol);if(g)g.real+=r.pnl;}
+  for(const k of Object.keys(openByKey)){const p=openByKey[k];if(p.instrument!=="option")continue;
+    const g=get(p.symbol);if(!g)continue;
+    for(const l of p.lots)if(l.remaining>1e-9)g.open+=(-l.dir*l.price*p.multiplier-l.feePerUnit)*l.remaining;}
   for(const sp of (state.spreads||[])){
-    if(excludeProp(sp.account))continue;
+    if(excludeProp(sp.account))continue;const g=get(sp.symbol);if(!g)continue;
+    if(sp.status==="closed"){g.real+=spreadRealized(sp);continue;}
     const q=num(sp.quantity)*100;let v=-num(sp.fees);
-    for(const l of (sp.legs||[])){
-      const sign=l.side==="short"?1:-1;
-      v+=sign*num(l.open)*q;                       // premium received (short) / paid (long)
-      if(l.close!=null)v-=sign*num(l.close)*q;     // buy-back paid / sold-to-close received
-    }
-    add(sp.symbol,v);
-  }
-  return cash;
+    for(const l of (sp.legs||[])){const sign=l.side==="short"?1:-1;
+      v+=sign*num(l.open)*q;if(l.close!=null)v-=sign*num(l.close)*q;}
+    g.open+=v;}
+  return out;
 }
 function costBasisRows(){
-  const {openByKey}=computePnl(expandTrades(state.trades.filter(t=>!excludeProp(t.account))));
+  const {realized,openByKey}=computePnl(expandTrades(state.trades.filter(t=>!excludeProp(t.account))));
   const pos=openPositions(openByKey,state.marks).filter(p=>p.instrument==="stock"&&p.qty>1e-9&&p.direction==="Long");
-  const cash=optionCashBySym();
+  const cash=optionCashBySym(realized,openByKey);
   return pos.map(p=>{
-    const oc=cash[p.symbol]||0,adj=p.avgPrice-oc/p.qty;
-    return {sym:p.symbol,qty:p.qty,avg:p.avgPrice,optCash:oc,adj,mark:p.mark,
+    const g=cash[p.symbol]||{real:0,open:0},oc=g.real+g.open,adj=p.avgPrice-oc/p.qty;
+    return {sym:p.symbol,qty:p.qty,avg:p.avgPrice,optReal:g.real,optOpen:g.open,adj,mark:p.mark,
       effPl:p.mark!=null?(p.mark-adj)*p.qty:null};
   }).sort((a,b)=>b.qty*b.avg-a.qty*a.avg);
 }
@@ -2739,17 +2738,18 @@ function renderBuyDash(){
     <div class="sd-sec"><span class="hash">§ 05</span><b>ADJUSTED COST BASIS</b><span class="mut sdcount">${cb.length}</span><span class="secarrow" aria-hidden="true">▼</span></div>
     <div class="sd-body">
     <div class="tablewrap"><table class="cb-table"><thead><tr>
-      <th class="l">Symbol</th><th>Shares</th><th>Avg cost</th><th>Options net</th><th>Adj cost / sh</th><th>Mark</th><th>Eff. P/L</th>
+      <th class="l">Symbol</th><th>Shares</th><th>Avg cost</th><th>Opt realized</th><th>Opt open</th><th>Adj cost / sh</th><th>Mark</th><th>Eff. P/L</th>
     </tr></thead><tbody>${cb.map(r=>`<tr>
       <td class="l"><b>${r.sym}</b></td>
       <td>${fmtNum(r.qty)}</td>
       <td>${fmtNum(Math.round(r.avg*100)/100)}</td>
-      <td class="${cls(r.optCash)}">${fmtSignedColored(r.optCash).replace("−","-")}</td>
+      <td class="${Math.abs(r.optReal)<0.005?"mut":cls(r.optReal)}">${Math.abs(r.optReal)<0.005?"—":fmtSignedColored(r.optReal).replace("−","-")}</td>
+      <td class="${Math.abs(r.optOpen)<0.005?"mut":cls(r.optOpen)}" title="cash in/out on option positions still open">${Math.abs(r.optOpen)<0.005?"—":fmtSignedColored(r.optOpen).replace("−","-")}</td>
       <td><b>${fmtNum(Math.round(r.adj*100)/100)}</b></td>
       <td class="mut">${r.mark!=null?fmtNum(r.mark):"—"}</td>
       <td class="${r.effPl==null?"mut":cls(r.effPl)}">${r.effPl==null?"—":fmtSignedColored(r.effPl).replace("−","-")}</td>
     </tr>`).join("")}</tbody></table></div>
-    <p class="note" style="margin:8px 2px 0">Adj cost / sh = average cost minus the net cash from every call and put on that underlying (bought and sold, buy-side and sell-side, fees included — open short premium counts once collected). Eff. P/L = (mark − adjusted cost) × shares: your real position in the stock after option income.</p>
+    <p class="note" style="margin:8px 2px 0"><b>Opt realized</b> = locked-in P/L from every closed call and put on that underlying (buy-side and sell-side, fees included). <b>Opt open</b> = cash currently collected (short premium) or paid (long debits) on options still working — it reverses into realized when they close. Adj cost / sh = average cost − (realized + open) ÷ shares; Eff. P/L = (mark − adjusted cost) × shares.</p>
     </div></div>`;})()}
   </div>`;
   sdWireCharts("#buyDash","#bdTip");
