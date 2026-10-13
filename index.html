@@ -3867,8 +3867,9 @@ function applySplit(sym,oldN,newN,adjOptions){
       if(l.open!=null)l.open=r6(l.open*pf);
       if(l.close!=null)l.close=r6(l.close*pf);}
     sps++;}
-  const mk="STK:"+sym;
-  if(state.marks[mk]!=null&&isFinite(state.marks[mk]))state.marks[mk]=r6(state.marks[mk]*pf);
+  // the stored mark usually comes from the LIVE fetch, which already reflects the split —
+  // rescaling it would double-apply. Drop it and let the next fetch bring the true quote.
+  delete state.marks["STK:"+sym];
   if(adjOptions)for(const k of Object.keys(state.marks))     // option marks are keyed by the old strikes
     if(k.startsWith("OPT:"+sym+":"))delete state.marks[k];
   return {stocks,opts,sps};
@@ -3893,7 +3894,8 @@ function runSplitTool(){
   if(!window.confirm(`Apply a ${oldN}-for-${newN}… (${kind} split: every ${oldN} old share${oldN!==1?"s":""} → ${newN} new) to ${sym}?\n\n${posLine}Rescales ${stockN} stock record${stockN!==1?"s":""}${adjO?` and ${optN} option record${optN!==1?"s":""}`:""}. Dollar P/L is unchanged. This edits your records — consider exporting a backup from this tab first.`))return;
   const res=applySplit(sym,oldN,newN,adjO);
   save();refreshAll();
-  note.innerHTML=`<span class="pos">Adjusted ${res.stocks} stock${adjO?`, ${res.opts} option, ${res.sps} sell-side`:""} record${res.stocks+res.opts+res.sps!==1?"s":""} for ${sym}.</span>`;
+  fetchStockPrices(false);   // repopulate the cleared mark with the real post-split quote
+  note.innerHTML=`<span class="pos">Adjusted ${res.stocks} stock${adjO?`, ${res.opts} option, ${res.sps} sell-side`:""} record${res.stocks+res.opts+res.sps!==1?"s":""} for ${sym} — live price re-fetched.</span>`;
   toast(`${sym} adjusted for the ${kind} split`);
 }
 
