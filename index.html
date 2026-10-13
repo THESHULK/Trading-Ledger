@@ -901,6 +901,20 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
       </div>
     </div>
     <div class="panel">
+      <h3>Stock Split Adjustment</h3>
+      <p class="note">Rescales every ledger record for a symbol after a split — share counts and prices move inversely, so your dollar P/L never changes. Example: a 1-for-4 <b>reverse</b> split means every <b>4</b> old shares became <b>1</b> new share.</p>
+      <div class="form">
+        <div class="field"><label>Symbol</label><input type="text" id="split-sym" placeholder="ETHA" style="text-transform:uppercase"></div>
+        <div class="field"><label>Old shares</label><input type="number" id="split-old" step="any" min="0" placeholder="4"></div>
+        <div class="field"><label>Became new shares</label><input type="number" id="split-new" step="any" min="0" placeholder="1"></div>
+      </div>
+      <div class="row">
+        <label class="pf-acct" title="Standard treatment for FORWARD splits (strike ÷, premium ÷, contracts ×). Leave off for a reverse split: those contracts usually become non-standard — same strike, smaller deliverable — so edit them to match your broker instead."><input type="checkbox" id="split-opts"> also adjust options on this symbol</label>
+        <button class="btn" id="splitApply">Preview &amp; apply</button>
+        <span class="note" id="splitNote"></span>
+      </div>
+    </div>
+    <div class="panel">
       <h3>Danger Zone</h3>
       <div class="row">
         <button class="btn danger" id="clearAll">Delete all data</button>
@@ -3829,6 +3843,60 @@ function initCollapsible(){
   });
 }
 
+/* ============================ STOCK SPLIT ============================ */
+/* rescale a symbol's records after a split: quantities × (new/old), prices × (old/new),
+   so every dollar figure (P/L, cost, fees) is untouched. Options only when asked —
+   standard for forward splits; reverse splits usually leave non-standard contracts
+   (same strike, smaller deliverable) that should be edited to match the broker. */
+function applySplit(sym,oldN,newN,adjOptions){
+  sym=(sym||"").toUpperCase().trim();
+  const f=newN/oldN,pf=oldN/newN,r6=v=>Math.round(num(v)*1e6)/1e6;
+  let stocks=0,opts=0,sps=0;
+  for(const t of state.trades){
+    if((t.symbol||"").toUpperCase().trim()!==sym)continue;
+    if(t.instrument==="stock"){t.quantity=r6(t.quantity*f);t.price=r6(t.price*pf);stocks++;}
+    else if(t.instrument==="option"&&adjOptions){
+      t.quantity=r6(t.quantity*f);t.price=r6(t.price*pf);
+      if(t.strike!=null&&t.strike!=="")t.strike=r6(t.strike*pf);opts++;}
+  }
+  if(adjOptions)for(const sp of (state.spreads||[])){
+    if((sp.symbol||"").toUpperCase().trim()!==sym)continue;
+    sp.quantity=r6(sp.quantity*f);
+    for(const l of (sp.legs||[])){
+      if(l.strike!=null)l.strike=r6(l.strike*pf);
+      if(l.open!=null)l.open=r6(l.open*pf);
+      if(l.close!=null)l.close=r6(l.close*pf);}
+    sps++;}
+  const mk="STK:"+sym;
+  if(state.marks[mk]!=null&&isFinite(state.marks[mk]))state.marks[mk]=r6(state.marks[mk]*pf);
+  if(adjOptions)for(const k of Object.keys(state.marks))     // option marks are keyed by the old strikes
+    if(k.startsWith("OPT:"+sym+":"))delete state.marks[k];
+  return {stocks,opts,sps};
+}
+function runSplitTool(){
+  const sym=($("#split-sym").value||"").toUpperCase().trim();
+  const oldN=parseFloat($("#split-old").value),newN=parseFloat($("#split-new").value);
+  const adjO=$("#split-opts").checked,note=$("#splitNote");
+  if(!sym){toast("Enter the symbol",true);return;}
+  if(!(oldN>0)||!(newN>0)){toast("Enter the split ratio (old → new shares)",true);return;}
+  if(oldN===newN){toast("That ratio changes nothing",true);return;}
+  const stockN=state.trades.filter(t=>t.instrument==="stock"&&(t.symbol||"").toUpperCase().trim()===sym).length;
+  const optN=state.trades.filter(t=>t.instrument==="option"&&(t.symbol||"").toUpperCase().trim()===sym).length
+            +(state.spreads||[]).filter(x=>(x.symbol||"").toUpperCase().trim()===sym).length;
+  if(!stockN&&!(adjO&&optN)){toast(`No ${sym} records to adjust`,true);return;}
+  // before/after on the live position so the confirm is concrete
+  const {openByKey}=computePnl(expandTrades(state.trades.filter(t=>!excludeProp(t.account))));
+  const posb=openPositions(openByKey,state.marks).find(p=>p.key==="STK:"+sym);
+  const f=newN/oldN,pf=oldN/newN;
+  const posLine=posb?`Held position: ${fmtNum(posb.qty)} sh @ avg ${fmtNum(Math.round(posb.avgPrice*100)/100)} → ${fmtNum(Math.round(posb.qty*f*1e6)/1e6)} sh @ avg ${fmtNum(Math.round(posb.avgPrice*pf*100)/100)}.\n`:"";
+  const kind=newN<oldN?"reverse":"forward";
+  if(!window.confirm(`Apply a ${oldN}-for-${newN}… (${kind} split: every ${oldN} old share${oldN!==1?"s":""} → ${newN} new) to ${sym}?\n\n${posLine}Rescales ${stockN} stock record${stockN!==1?"s":""}${adjO?` and ${optN} option record${optN!==1?"s":""}`:""}. Dollar P/L is unchanged. This edits your records — consider exporting a backup from this tab first.`))return;
+  const res=applySplit(sym,oldN,newN,adjO);
+  save();refreshAll();
+  note.innerHTML=`<span class="pos">Adjusted ${res.stocks} stock${adjO?`, ${res.opts} option, ${res.sps} sell-side`:""} record${res.stocks+res.opts+res.sps!==1?"s":""} for ${sym}.</span>`;
+  toast(`${sym} adjusted for the ${kind} split`);
+}
+
 /* ============================ CLOSE POSITION ============================ */
 /* One-click close: prefill the position, ask only for price/qty/date/fees, and write the
    closing entry — an opposing execution for stocks/options (the FIFO matcher pairs it and
@@ -4280,6 +4348,7 @@ function init(){
   document.documentElement.dataset.theme=savedTheme;$("#themeSel").value=savedTheme;
   $("#themeSel").onchange=e=>applyTheme(e.target.value);
   // #refreshPrices lives inside the buy-side dashboard and is wired on each render
+  $("#splitApply").onclick=runSplitTool;
   $("#csvPick").onclick=()=>$("#csvFile").click();
   $("#csvFile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
     rd.onload=()=>importCSV(rd.result);rd.readAsText(f);e.target.value="";};
