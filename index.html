@@ -450,6 +450,13 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .cb-table td{padding:8px 12px;text-align:right;border-bottom:1px solid var(--line)}
 .cb-table .l{text-align:left}
 .cb-table tr:last-child td{border-bottom:0}
+.cb-link{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+.cb-link:hover{text-decoration-style:solid}
+.cb-detail td{background:var(--bg2);padding:10px 14px}
+.cb-dh{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:0 0 6px}
+.cb-item{display:flex;justify-content:space-between;gap:14px;font-size:11.5px;color:var(--muted);padding:3px 0;border-top:1px solid var(--line)}
+.cb-item:first-of-type{border-top:0}
+.cb-item.exp span{color:var(--txt)}
 /* ---- prop account designation ---- */
 .pf-accts{border-top:1px solid var(--line);margin-top:12px;padding:12px 0 10px}
 .pf-accts-head{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:700}
@@ -2677,18 +2684,24 @@ function optionCashBySym(realized,openByKey){
   // split by state so both are visible: realized = P/L locked in on closed options (buy-side
   // matches + closed sell-side); open = cash currently in/out on positions still working
   // (short credit collected, long debits paid). realized + open = total option cash.
-  const out={},get=sym=>{sym=(sym||"").toUpperCase().trim();return sym?(out[sym]=out[sym]||{real:0,open:0}):null;};
-  for(const r of realized)if(r.instrument==="option"){const g=get(r.symbol);if(g)g.real+=r.pnl;}
+  const out={},get=sym=>{sym=(sym||"").toUpperCase().trim();return sym?(out[sym]=out[sym]||{real:0,open:0,realItems:[],openItems:[]}):null;};
+  const occ=k=>{const kp=String(k||"").split(":");return `${kp[2]||""} ${fmtNum(kp[3]||"")}${(kp[4]||"")[0]?.toUpperCase()||""}`;};
+  for(const r of realized)if(r.instrument==="option"){const g=get(r.symbol);if(!g)continue;g.real+=r.pnl;
+    g.realItems.push({label:`${r.date} · ${occ(r.key)} · ${r.dir===1?"long":"short"} ×${fmtNum(r.qty)} ${fmtNum(r.openPrice)}→${fmtNum(r.closePrice)}`,cash:r.pnl});}
   for(const k of Object.keys(openByKey)){const p=openByKey[k];if(p.instrument!=="option")continue;
-    const g=get(p.symbol);if(!g)continue;
-    for(const l of p.lots)if(l.remaining>1e-9)g.open+=(-l.dir*l.price*p.multiplier-l.feePerUnit)*l.remaining;}
+    const g=get(p.symbol);if(!g)continue;const exp=String(k).split(":")[2]||"";
+    for(const l of p.lots)if(l.remaining>1e-9){const v=(-l.dir*l.price*p.multiplier-l.feePerUnit)*l.remaining;g.open+=v;
+      g.openItems.push({label:`${l.date||""} · ${occ(k)} · ${l.dir===1?"long":"short"} ×${fmtNum(l.remaining)} @ ${fmtNum(l.price)} (buy-side)`,cash:v,expired:expiredOpen(exp,true)});}}
   for(const sp of (state.spreads||[])){
     if(excludeProp(sp.account))continue;const g=get(sp.symbol);if(!g)continue;
-    if(sp.status==="closed"){g.real+=spreadRealized(sp);continue;}
+    const legs=(sp.legs||[]).map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""}${fmtNum(l.strike)}`).join("/");
+    if(sp.status==="closed"){const v=spreadRealized(sp);g.real+=v;
+      g.realItems.push({label:`${sp.dateClosed||""} · ${sp.type||""} ${legs} exp ${sp.expiry||"—"} · ×${fmtNum(sp.quantity)} (sell-side)`,cash:v});continue;}
     const q=num(sp.quantity)*100;let v=-num(sp.fees);
     for(const l of (sp.legs||[])){const sign=l.side==="short"?1:-1;
       v+=sign*num(l.open)*q;if(l.close!=null)v-=sign*num(l.close)*q;}
-    g.open+=v;}
+    g.open+=v;
+    g.openItems.push({label:`${sp.dateOpened||""} · ${sp.type||""} ${legs} exp ${sp.expiry||"—"} · ×${fmtNum(sp.quantity)}${sp.account?" · "+sp.account:""} (sell-side)`,cash:v,expired:expiredOpen(sp.expiry,true)});}
   return out;
 }
 function costBasisRows(){
@@ -2696,9 +2709,9 @@ function costBasisRows(){
   const pos=openPositions(openByKey,state.marks).filter(p=>p.instrument==="stock"&&p.qty>1e-9&&p.direction==="Long");
   const cash=optionCashBySym(realized,openByKey);
   return pos.map(p=>{
-    const g=cash[p.symbol]||{real:0,open:0},oc=g.real+g.open,adj=p.avgPrice-oc/p.qty;
+    const g=cash[p.symbol]||{real:0,open:0,realItems:[],openItems:[]},oc=g.real+g.open,adj=p.avgPrice-oc/p.qty;
     return {sym:p.symbol,qty:p.qty,avg:p.avgPrice,optReal:g.real,optOpen:g.open,adj,mark:p.mark,
-      effPl:p.mark!=null?(p.mark-adj)*p.qty:null};
+      realItems:g.realItems,openItems:g.openItems,effPl:p.mark!=null?(p.mark-adj)*p.qty:null};
   }).sort((a,b)=>b.qty*b.avg-a.qty*a.avg);
 }
 function renderBuyDash(){
@@ -2757,18 +2770,30 @@ function renderBuyDash(){
       <td class="l"><b>${r.sym}</b></td>
       <td>${fmtNum(r.qty)}</td>
       <td>${fmtNum(Math.round(r.avg*100)/100)}</td>
-      <td class="${Math.abs(r.optReal)<0.005?"mut":cls(r.optReal)}">${Math.abs(r.optReal)<0.005?"—":fmtSignedColored(r.optReal).replace("−","-")}</td>
-      <td class="${Math.abs(r.optOpen)<0.005?"mut":cls(r.optOpen)}" title="cash in/out on option positions still open">${Math.abs(r.optOpen)<0.005?"—":fmtSignedColored(r.optOpen).replace("−","-")}</td>
+      <td class="${Math.abs(r.optReal)<0.005?"mut":cls(r.optReal)}">${Math.abs(r.optReal)<0.005?"—":`<button class="cb-link" data-cbd="${attr(r.sym)}|real" title="show the closed options behind this">${fmtSignedColored(r.optReal).replace("−","-")}</button>`}</td>
+      <td class="${Math.abs(r.optOpen)<0.005?"mut":cls(r.optOpen)}">${Math.abs(r.optOpen)<0.005?"—":`<button class="cb-link" data-cbd="${attr(r.sym)}|open" title="show the open options behind this">${fmtSignedColored(r.optOpen).replace("−","-")}</button>`}</td>
       <td><b>${fmtNum(Math.round(r.adj*100)/100)}</b></td>
       <td class="mut">${r.mark!=null?fmtNum(r.mark):"—"}</td>
       <td class="${r.effPl==null?"mut":cls(r.effPl)}">${r.effPl==null?"—":fmtSignedColored(r.effPl).replace("−","-")}</td>
-    </tr>`).join("")}</tbody></table></div>
+    </tr>
+    <tr class="cb-detail" data-cbsym="${attr(r.sym)}" style="display:none"><td colspan="8">
+      ${["open","real"].map(kind=>{const items=kind==="open"?r.openItems:r.realItems;if(!items.length)return "";
+        return `<div class="cb-dsec" data-cbkind="${kind}"><div class="cb-dh">${kind==="open"?"Open option positions":"Closed option positions"} · ${items.length}</div>`+
+          items.map(it=>`<div class="cb-item${it.expired?" exp":""}"><span>${esc(it.label)}${it.expired?' <span class="dte-exp">EXPIRED — still open: close it (buy-back or 0) to move it to realized</span>':""}</span><b class="${cls(it.cash)}">${fmtSignedColored(it.cash).replace("−","-")}</b></div>`).join("")+`</div>`;}).join("")}
+    </td></tr>`).join("")}</tbody></table></div>
     <p class="note" style="margin:8px 2px 0"><b>Opt realized</b> = locked-in P/L from every closed call and put on that underlying (buy-side and sell-side, fees included). <b>Opt open</b> = cash currently collected (short premium) or paid (long debits) on options still working — it reverses into realized when they close. Adj cost / sh = average cost − (realized + open) ÷ shares; Eff. P/L = (mark − adjusted cost) × shares.</p>
     </div></div>`;})()}
   </div>`;
   sdWireCharts("#buyDash","#bdTip");
   wireSdGroups(box,"buyside:");
   $("#refreshPrices").onclick=()=>fetchStockPrices(true);
+  box.querySelectorAll("[data-cbd]").forEach(b=>b.onclick=()=>{
+    const [sym,kind]=b.dataset.cbd.split("|");
+    const row=[...box.querySelectorAll(".cb-detail")].find(r=>r.dataset.cbsym===sym);if(!row)return;
+    const showing=row.style.display!=="none"&&row.dataset.kind===kind;
+    row.style.display=showing?"none":"";row.dataset.kind=kind;
+    row.querySelectorAll(".cb-dsec").forEach(d=>d.style.display=d.dataset.cbkind===kind?"":"none");
+  });
   renderPositions();
 }
 
