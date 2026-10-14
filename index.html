@@ -2536,7 +2536,8 @@ function rtRowHtml(r){
     <td>${fmtNum(r.openPrice)} <span class="mut">→</span> ${fmtNum(r.closePrice)}</td>
     <td class="mut">${r.fees?fmtMoney(r.fees):"—"}</td>
     <td class="${cls(r.pnl)}">${fmtSignedColored(r.pnl)}</td>
-    <td><button class="iconbtn" data-edit="${attr(r.closeId)}" title="Edit the closing execution (grouped row — untick 'one row per round trip' to manage each execution)">edit</button>
+    <td>${r.openId?`<button class="iconbtn" data-edit="${attr(r.openId)}" title="Edit the opening execution — its date, price, quantity, fees">edit open</button>`:""}
+        <button class="iconbtn" data-edit="${attr(r.closeId)}" title="Edit the closing execution — its date, price, quantity, fees">edit close</button>
         ${noteBtn(r.closeId)}</td>
   </tr>`;
 }
