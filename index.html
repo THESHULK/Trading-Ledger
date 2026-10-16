@@ -444,6 +444,16 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 .iconbtn.note.has{border-color:var(--green-dim);color:var(--green)}
 .sd-pos .sd-note{margin-left:4px}
 .jempty{color:var(--faint);font-size:13px;padding:14px 2px}
+/* ---- dashboard calendar day panel ---- */
+.dd{border:1px solid var(--line2);border-radius:11px;background:var(--bg2);padding:10px 14px;margin-top:10px}
+.dd-head{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.dd-head b:first-child{color:var(--txt)}
+.dd-x{margin-left:auto;padding:2px 8px}
+.dd-sec{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:9px 0 3px}
+.dd-row{display:flex;justify-content:space-between;gap:14px;align-items:center;font-size:12px;color:var(--muted);padding:4px 0;border-top:1px solid var(--line)}
+.dd-row:first-of-type{border-top:0}
+.dd-row b{font-family:var(--mono)}
+.badge.propfirm{color:#c9a7ff;border-color:#5a4a7a}
 /* ---- adjusted cost basis ---- */
 .cb-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
 .cb-table th{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);padding:8px 12px;text-align:right;border-bottom:1px solid var(--line);background:var(--panel)}
@@ -1573,7 +1583,11 @@ function renderDash(){
   drawEquity(allRealized.concat(propEvents));
   drawWinStats(allRealized);
   drawMonthly(allRealized.concat(propEvents));
-  drawCalendar(allRealized.concat(propEvents));
+  const opens=trades.map(t=>({date:t.date,symbol:(t.symbol||"").toUpperCase(),instrument:t.instrument,
+      side:isFutureRT(t)?(t.direction||"long"):t.action,qty:num(t.quantity),price:isFutureRT(t)?num(t.entry):num(t.price),account:t.account||"",id:t.id}))
+    .concat(spreadsActive.map(sp=>({date:sp.dateOpened||"",symbol:(sp.symbol||"").toUpperCase(),instrument:"spread",side:sp.type||"",qty:num(sp.quantity),
+      price:spreadNetOpen(sp),account:sp.account||"",id:sp.id})));
+  drawCalendar(allRealized.concat(propEvents),opens);
   drawHistogram(allRealized);
   drawDayOfWeek(allRealized.concat(propEvents));
   dashData={allRealized,allPos,propEvents,totalReal,totalUn,unKnown,winRate,avgWin,avgLoss,wins:wins.length,losses:losses.length,
@@ -1871,7 +1885,7 @@ function drawMonthly(events){
 }
 
 /* ---- daily P&L calendar heatmap ---- */
-let dashCalMonth=null,dashCalEvents=[];   // "YYYY-MM"; null = latest month with activity
+let dashCalMonth=null,dashCalEvents=[],dashCalOpens=[],dashCalDay=null;   // "YYYY-MM"; null = latest month with activity
 function dashCalShift(n){const [y,m]=dashCalYM().split("-").map(Number);const d=new Date(y,m-1+n,1);
   dashCalMonth=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");drawCalendar(dashCalEvents);}
 function dashCalYM(){
@@ -1879,9 +1893,37 @@ function dashCalYM(){
   const ks=Object.keys(dashCalMap()).sort();return ks.length?ks[ks.length-1].slice(0,7):today().slice(0,7);}
 function dashCalMap(){const map={};for(const e of dashCalEvents){const d=String(e.date).slice(0,10);if(!d)continue;
   const m=map[d]||(map[d]={pl:0,n:0});m.pl+=e.pnl;m.n++;}return map;}
+// the selected day's activity: what closed (with P/L), prop-firm cashflows, and what was opened
+function renderDashDay(){
+  const el=$("#dashDay");if(!el)return;
+  const d=dashCalDay;if(!d){el.innerHTML="";return;}
+  const closed=dashCalEvents.filter(e=>String(e.date).slice(0,10)===d&&e.instrument!=="propfirm");
+  const prop=dashCalEvents.filter(e=>String(e.date).slice(0,10)===d&&e.instrument==="propfirm");
+  const opened=dashCalOpens.filter(o=>String(o.date).slice(0,10)===d);
+  const net=closed.concat(prop).reduce((a,e)=>a+e.pnl,0);
+  const occ=e=>{const kp=String(e.key||"").split(":");return e.instrument==="option"?` ${kp[2]||""} ${fmtNum(kp[3]||"")}${(kp[4]||"")[0]?.toUpperCase()||""}`:"";};
+  const legs=e=>e.instrument==="spread"&&e.legs?" "+e.legs.map(l=>`${l.side==="short"?"−":"+"}${(l.optionType||"")[0]?.toUpperCase()||""}${fmtNum(l.strike)}`).join("/"):"";
+  const row=(cells,plc)=>`<div class="dd-row"><span>${cells}</span>${plc}</div>`;
+  let h=`<div class="dd-head"><b>${d}</b>`+
+    (closed.length||prop.length?` · ${closed.length} closed · net <b class="${cls(net)}">${fmtSignedColored(net).replace("−","-")}</b>`:"")+
+    `<button class="iconbtn dd-x" data-ddclose title="Close">×</button></div>`;
+  if(closed.length){h+=`<div class="dd-sec">Closed</div>`+closed.map(e=>row(
+    `<span class="badge ${e.instrument}">${e.instrument==="spread"?"sell-side":e.instrument}</span> <b>${esc(e.symbol)}</b>${esc(occ(e))}${esc(legs(e))}`+
+    ` · ${e.dir===1?"long":e.dir===-1?"short":(e.type||"")} ×${fmtNum(e.qty||0)}`+
+    (e.openPrice!=null?` · ${fmtNum(e.openPrice)} → ${fmtNum(e.closePrice)}`:"")+(e.account?` · ${esc(e.account)}`:""),
+    `<b class="${cls(e.pnl)}">${fmtSignedColored(e.pnl).replace("−","-")}</b>`)).join("");}
+  if(prop.length){h+=`<div class="dd-sec">Prop firm</div>`+prop.map(e=>row(`<span class="badge propfirm">prop firm</span> ${e.pnl<0?"fee / cost":"payout"}`,
+    `<b class="${cls(e.pnl)}">${fmtSignedColored(e.pnl).replace("−","-")}</b>`)).join("");}
+  if(opened.length){h+=`<div class="dd-sec">Opened</div>`+opened.map(o=>row(
+    `<span class="badge ${o.instrument}">${o.instrument==="spread"?"sell-side":o.instrument}</span> <b>${esc(o.symbol)}</b> · ${esc(String(o.side).toUpperCase())} ×${fmtNum(o.qty)} @ ${fmtNum(o.price)}${o.account?` · ${esc(o.account)}`:""}`,
+    `<span class="mut">open</span>`)).join("");}
+  if(!closed.length&&!prop.length&&!opened.length)h+=`<div class="mut" style="font-size:12px;padding:6px 0">No activity on this day.</div>`;
+  el.innerHTML=`<div class="dd">${h}</div>`;
+  const x=el.querySelector("[data-ddclose]");if(x)x.onclick=()=>{dashCalDay=null;drawCalendar(dashCalEvents);};
+}
 // a real month grid — weekdays across the top, one cell per date — for the dashboard's filtered range
-function drawCalendar(events){
-  dashCalEvents=events||[];
+function drawCalendar(events,opens){
+  dashCalEvents=events||[];if(opens)dashCalOpens=opens;
   const box=$("#dashCal");if(!box)return;
   const map=dashCalMap(),all=Object.keys(map);
   const net=all.reduce((a,d)=>a+map[d].pl,0);
@@ -1893,11 +1935,13 @@ function drawCalendar(events){
   for(let d=1;d<=days;d++){
     const ds=`${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`,st=map[ds];
     if(st){moPl+=st.pl;moDays++;moN+=st.n;}
-    const c=["jc-cell"];if(ds===tod)c.push("today");if(st)c.push(st.pl>=0?"win":"loss");
-    cells+=`<div class="${c.join(" ")}" title="${attr(st?`${ds} · ${st.n} closed · ${fmtMoney(st.pl)}`:ds)}">`+
-      `<span class="jc-d">${d}</span>${st?`<span class="jc-pl">${shortMoney(st.pl)}</span>`:""}</div>`;
+    const c=["jc-cell"];if(ds===tod)c.push("today");if(st)c.push(st.pl>=0?"win":"loss");if(ds===dashCalDay)c.push("sel");
+    cells+=`<button type="button" class="${c.join(" ")}" data-dcday="${ds}" title="${attr(st?`${ds} · ${st.n} closed · ${fmtMoney(st.pl)} — click for the trades`:ds+" — click for the trades")}">`+
+      `<span class="jc-d">${d}</span>${st?`<span class="jc-pl">${shortMoney(st.pl)}</span>`:""}</button>`;
   }
-  box.innerHTML=`<div class="jc-grid">${JC_WD.map(w=>`<div class="jc-wd">${w}</div>`).join("")}${cells}</div>`;
+  box.innerHTML=`<div class="jc-grid">${JC_WD.map(w=>`<div class="jc-wd">${w}</div>`).join("")}${cells}</div><div id="dashDay"></div>`;
+  box.querySelectorAll("[data-dcday]").forEach(b=>b.onclick=()=>{dashCalDay=dashCalDay===b.dataset.dcday?null:b.dataset.dcday;drawCalendar(dashCalEvents);});
+  renderDashDay();
   $("#dcTitle").textContent=first.toLocaleDateString(undefined,{month:"long",year:"numeric"});
   $("#dcSummary").innerHTML=`<span>${moDays} trading day${moDays!==1?"s":""}</span><span>${moN} closed</span>`+
     `<span>month <b class="${cls(moPl)}">${fmtSignedColored(moPl).replace("−","-")}</b></span>`;
