@@ -123,8 +123,17 @@ Left menu → **APIs & Services → Credentials** (or **Google Auth Platform →
 
    ✅ `https://janedoe.github.io`  ❌ `https://janedoe.github.io/Trading-Ledger/`
    (the `/Trading-Ledger/` path is **not** part of the origin — don't include it)
-5. **Authorized redirect URIs:** leave **empty**. This app uses the token (popup) flow, so
-   redirect URIs are not needed.
+5. **Authorized redirect URIs → + Add URI.** Add the app page itself — this enables the
+   popup-free sign-in the app falls back to on phones and installed (PWA) copies:
+
+   | Where you run it | Add this exact value |
+   |---|---|
+   | Local testing | `http://localhost:8000/index.html` |
+   | GitHub Pages | `https://YOUR-USERNAME.github.io/Trading-Ledger/index.html` |
+   | Custom domain | `https://your-domain.com/index.html` |
+
+   (If you open the app at the folder URL without `index.html`, add that form too, e.g.
+   `https://YOUR-USERNAME.github.io/Trading-Ledger/`.)
 6. **Create** → a dialog shows your **Client ID** like
    `123456789-abcd….apps.googleusercontent.com`. **Copy it.** (You can reopen it anytime
    from the Credentials list.)

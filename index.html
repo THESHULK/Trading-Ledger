@@ -1320,12 +1320,44 @@ function scheduleDriveWrite(){
 }
 // background sync only runs while a valid token is already in hand — never force a refresh (and its popup) while idle
 function startDriveAuto(){clearInterval(driveAutoTimer);driveAutoTimer=setInterval(()=>{if(driveConnected&&!document.hidden&&tokenValid())driveSync();},120000);}
+/* Popup-free sign-in: send the whole tab to Google and come back here with the token in
+   the URL fragment (the OAuth 2.0 implicit flow). Used automatically in an installed PWA and
+   when the popup fails; needs this page's URL under Authorized redirect URIs in the Client ID. */
+const GSTATE_KEY="gdrive_state";
+function driveRedirectUri(){return location.origin+location.pathname;}
+function driveRedirectUrl(){
+  const st=Math.random().toString(36).slice(2)+Date.now().toString(36);
+  try{sessionStorage.setItem(GSTATE_KEY,st);}catch(e){}
+  const q=new URLSearchParams({client_id:GDRIVE_CLIENT_ID,redirect_uri:driveRedirectUri(),response_type:"token",
+    scope:GDRIVE_SCOPE,include_granted_scopes:"true",state:st,prompt:"select_account"});
+  return "https://accounts.google.com/o/oauth2/v2/auth?"+q.toString();
+}
+function driveRedirectAuth(){if(!driveConfigured()){toast("Cloud sync isn't configured yet",true);return;}location.assign(driveRedirectUrl());}
+// on load: did we just come back from Google?
+function driveHandleRedirect(){
+  const h=location.hash||"";if(!/access_token=/.test(h))return false;
+  const q=new URLSearchParams(h.replace(/^#/,""));
+  let expect="";try{expect=sessionStorage.getItem(GSTATE_KEY)||"";sessionStorage.removeItem(GSTATE_KEY);}catch(e){}
+  try{history.replaceState(null,"",location.pathname+location.search);}catch(e){}   // scrub the token from the URL
+  if(q.get("error")){toast("Google sign-in failed ("+q.get("error")+")",true);return false;}
+  if(expect&&q.get("state")!==expect){toast("Sign-in response didn't match this session — try again",true);return false;}
+  gToken=q.get("access_token");gTokenExp=Date.now()+((parseInt(q.get("expires_in"),10)||3500)*1000)-60000;saveToken();
+  driveConnected=true;driveNeedsReconnect=false;try{localStorage.setItem("gdrive_on","1");}catch(e){}
+  updateDriveUI();flashSaved();driveSync().then(()=>toast("Connected to Google Drive")).catch(e=>toast(driveErrMsg(e),true));startDriveAuto();
+  return true;
+}
+function inStandaloneApp(){try{return (window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||navigator.standalone===true;}catch(e){return false;}}
 async function driveConnect(){
+  if(inStandaloneApp()){driveRedirectAuth();return;}   // popups are unreliable inside an installed app
   if(!driveConfigured()){toast("Cloud sync isn't configured yet",true);return;}
   if(!gisReady()){toast("Google sign-in still loading — try again",true);return;}
   try{await ensureToken(true);driveConnected=true;try{localStorage.setItem("gdrive_on","1");}catch(e){}
     updateDriveUI();flashSaved();await driveSync();startDriveAuto();toast("Connected to Google Drive");}
-  catch(e){console.warn("Google Drive connect failed:",e);toast(driveErrMsg(e),true);}
+  catch(e){console.warn("Google Drive connect failed:",e);
+    const t=e&&(e.type||e.error||"");
+    if(t==="popup_failed_to_open"||t==="popup_closed"||t==="popup_closed_by_user"){
+      toast("The Google popup couldn't finish — using the popup-free sign-in instead");driveRedirectAuth();return;}
+    toast(driveErrMsg(e),true);}
 }
 // Turn a GIS auth failure into something the user can act on, instead of always
 // blaming a "cancel". A blank popup that never finishes is usually an origin or
@@ -1345,16 +1377,16 @@ function driveDisconnect(){
   try{localStorage.removeItem("gdrive_on");}catch(e){}
   updateDriveUI();flashSaved();toast("Disconnected from Google Drive");
 }
+let driveNeedsReconnect=false;
 function driveAutoResume(){
   if(!driveConfigured())return;
   let on=false;try{on=localStorage.getItem("gdrive_on")==="1";}catch(e){}
   if(!on)return;
-  let tries=0;const iv=setInterval(async()=>{
-    if(gisReady()){clearInterval(iv);
-      try{await ensureToken(false);driveConnected=true;updateDriveUI();flashSaved();await driveSync();startDriveAuto();}
-      catch(e){updateDriveUI();}
-    }else if(++tries>60)clearInterval(iv);
-  },150);
+  // Only a still-valid cached token resumes silently. Asking Google for a new one here
+  // would open a popup with no user gesture — browsers show that as a blank window that
+  // never finishes — so an expired session just asks for a click instead.
+  if(!tokenValid()){driveNeedsReconnect=true;updateDriveUI();return;}
+  driveConnected=true;updateDriveUI();flashSaved();driveSync().catch(()=>{});startDriveAuto();
 }
 function updateDriveUI(msg){
   const s=$("#driveStatus");if(!s)return;
@@ -1367,7 +1399,12 @@ function updateDriveUI(msg){
     s.innerHTML=`<span class="pos">● Synced</span> to your Google Drive · ${msg||("last sync "+when)}`;
     show("#driveConnect",false);show("#driveSyncNow",true);show("#driveDisconnect",true);
   }else{
-    s.innerHTML=`Keep your ledger in <b>your own</b> Google Drive so it follows you across devices. Data goes only to your Drive — never to a server.`;
+    s.innerHTML=(driveNeedsReconnect
+      ?`<span class="neg">● Drive session expired</span> — sign in again to resume syncing. `
+      :`Keep your ledger in <b>your own</b> Google Drive so it follows you across devices. Data goes only to your Drive — never to a server. `)+
+      `<span class="mut">Blank sign-in window? Use <button class="iconbtn" id="driveNoPopup">sign in without a popup</button> (installed-app and mobile browsers often block popups).</span>`;
+    const np=$("#driveNoPopup");if(np)np.onclick=driveRedirectAuth;
+    const cb=$("#driveConnect");if(cb)cb.textContent=driveNeedsReconnect?"Reconnect Google Drive":"Connect Google Drive";
     show("#driveConnect",true);show("#driveSyncNow",false);show("#driveDisconnect",false);
   }
 }
@@ -4477,7 +4514,7 @@ function init(){
   $("#driveConnect").onclick=driveConnect;
   $("#driveSyncNow").onclick=driveSync;
   $("#driveDisconnect").onclick=driveDisconnect;
-  loadToken();updateDriveUI();driveAutoResume();
+  loadToken();if(!driveHandleRedirect()){updateDriveUI();driveAutoResume();}
   $("#clearAll").onclick=()=>{if(confirm("Delete ALL trades and marks? This cannot be undone."))
     {state={trades:[],marks:{},spreads:[],propfirm:[],seq:0};save();refreshAll();toast("All data deleted");}};
   window.addEventListener("resize",()=>{if($("#view-dash").classList.contains("on"))renderDash();
