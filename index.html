@@ -3558,7 +3558,8 @@ function sellDashMetrics(sps){
   // one row per open spread so each can show its own strikes, expiry and edit button
   const posRows=openSp.map(s=>({id:s.id,sym:(s.symbol||"?").toUpperCase(),type:s.type,qty:num(s.quantity),
     prem:spreadNetOpen(s)*num(s.quantity)*100,expiry:s.expiry||"",legs:s.legs||[],account:(s.account||"").trim()}))
-    .sort((a,b)=>b.prem-a.prem);
+    // soonest expiry first; undated positions last; same expiry → larger premium first
+    .sort((a,b)=>(a.expiry||"9999-99-99").localeCompare(b.expiry||"9999-99-99")||b.prem-a.prem);
   return {realized,collected,openPrem,realByMo,creditByMo,monthsCount,curMo,
     realizedMo:realByMo[curMo]||0,collectedMo:creditByMo[curMo]||0,
     avgMonthly:realized/monthsCount,avgCollected:collected/monthsCount,
