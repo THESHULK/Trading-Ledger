@@ -13,7 +13,7 @@ There is **no backend** — nobody hosts your data but you.
 
 - **Trades tab** — stocks/options/futures executions + sell-side spreads in one view, with an
   **Account** column/filter, **DTE** for options, per-trade realized P/L, and a filtered totals bar.
-- **Positions** — open positions netted from your trades, with mark prices for unrealized P/L.
+- **Positions** — open positions netted from your trades, with mark prices for unrealized P/L. Live stock prices come from Finnhub when you add a free key ("⚙ price source"), stored only in your browser; without one the app tries free public sources on a best-effort basis.
 - **Sell-Side** — multi-leg spreads with their own filters (including Account) and totals.
 - **Prop Firm** — cost/payout tracking that flows into the dashboard.
 - **Dashboard** — cumulative realized P/L (with a mouse crosshair), P/L by instrument and by ticker.
