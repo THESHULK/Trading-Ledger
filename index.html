@@ -2412,26 +2412,43 @@ let editId=null;
 function applyTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem("tape_theme",t);}catch(e){}}
 /* ---- live stock prices (best-effort; Yahoo Finance via CORS fallbacks) ---- */
 function setPriceStatus(t){const el=$("#priceStatus");if(el)el.textContent=t;}
+function quoteKey(){try{return localStorage.getItem("quote_key_finnhub")||"";}catch(e){return "";}}
+function setQuoteKey(){
+  const cur=quoteKey();
+  const k=prompt("Live prices: paste a free Finnhub API key (finnhub.io → sign up → Dashboard).\nIt is stored only in this browser. Leave blank to remove it.",cur);
+  if(k===null)return;
+  try{if(k.trim())localStorage.setItem("quote_key_finnhub",k.trim());else localStorage.removeItem("quote_key_finnhub");}catch(e){}
+  toast(k.trim()?"Price key saved — refreshing":"Price key removed");
+  if(k.trim())fetchStockPrices(true);else if($("#view-trades").classList.contains("on"))renderBuyDash();
+}
+// fetch with a hard time limit so a hung proxy can never freeze the refresh button
+async function fetchJSON(u,ms){const ac=typeof AbortController!=="undefined"?new AbortController():null;
+  const t=ac?setTimeout(()=>ac.abort(),ms||8000):null;
+  try{const r=await fetch(u,{cache:"no-store",signal:ac?ac.signal:undefined});if(!r.ok)return null;return await r.json();}
+  catch(e){return null;}finally{if(t)clearTimeout(t);}}
 async function fetchQuote(sym){
+  // 1) Finnhub — free key, sends CORS headers, reliable. Used whenever a key is set.
+  const key=quoteKey();
+  if(key){const j=await fetchJSON("https://finnhub.io/api/v1/quote?symbol="+encodeURIComponent(sym)+"&token="+encodeURIComponent(key));
+    const p=j&&Number(j.c);if(isFinite(p)&&p>0)return p;}
+  // 2) Keyless fallback: Yahoo Finance through public CORS proxies. Yahoo sends no CORS
+  // headers, so a browser can only read it via a proxy. Free proxies come and go and
+  // rate-limit often, so this is best-effort only.
   const base="https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(sym)+"?interval=1d&range=1d";
-  // Yahoo Finance doesn't send CORS headers, so a browser can never fetch it directly
-  // (that's the "blocked by CORS policy" / ERR_FAILED console error). We always go through
-  // public CORS proxies that re-serve the response with Access-Control-Allow-Origin. These
-  // free proxies are best-effort and occasionally rate-limit or 403; if all fail we fall
-  // back to manual mark prices.
   const urls=[
     "https://api.allorigins.win/raw?url="+encodeURIComponent(base),
     "https://api.codetabs.com/v1/proxy/?quest="+encodeURIComponent(base),
-    "https://thingproxy.freeboard.io/fetch/"+base,
   ];
-  for(const u of urls){try{const r=await fetch(u,{cache:"no-store"});if(!r.ok)continue;const j=await r.json();
+  for(const u of urls){const j=await fetchJSON(u,7000);
     const res=j&&j.chart&&j.chart.result&&j.chart.result[0];const p=res&&res.meta&&res.meta.regularMarketPrice;
-    if(isFinite(p)&&p>0)return p;}catch(e){}}
+    if(isFinite(p)&&p>0)return p;}
   return null;
 }
-let fetchingPrices=false;
+let fetchingPrices=false,refetchPrices=false;
 async function fetchStockPrices(manual){
-  if(fetchingPrices)return; fetchingPrices=true;
+  // a click during an in-flight fetch used to be silently ignored — queue a re-run instead
+  if(fetchingPrices){if(manual){refetchPrices=true;toast("Still fetching prices — will refresh again when done");}return;}
+  fetchingPrices=true;
   try{
     const {openByKey}=computePnl(expandTrades(state.trades));
     const pos=openPositions(openByKey,state.marks).filter(p=>p.instrument==="stock");
@@ -2441,14 +2458,20 @@ async function fetchStockPrices(manual){
     if(syms.length===0){if(manual)toast("No open positions to price");setPriceStatus("");return;}
     setPriceStatus(`fetching ${syms.length}…`);
     let ok=0;
-    for(const sym of syms){const p=await fetchQuote(sym);if(p!=null){state.marks["STK:"+sym]=Math.round(p*100)/100;ok++;}}
+    // a few at a time: fast, but gentle on Finnhub's free 60-calls/minute limit
+    for(let i=0;i<syms.length;i+=5){
+      const got=await Promise.all(syms.slice(i,i+5).map(sym=>fetchQuote(sym).then(p=>[sym,p])));
+      for(const [sym,p] of got)if(p!=null){state.marks["STK:"+sym]=Math.round(p*100)/100;ok++;}
+      setPriceStatus(`fetching… ${Math.min(i+5,syms.length)}/${syms.length}`);
+    }
     save();
     if($("#view-trades").classList.contains("on"))renderBuyDash();
     if($("#view-dash").classList.contains("on"))renderDash();
     if($("#view-spreads").classList.contains("on"))renderSpreads();
-    setPriceStatus(ok?`updated ${ok}/${syms.length} · ${new Date().toLocaleTimeString()}`:"couldn't reach price source (offline or blocked)");
-    if(manual)toast(ok?`Updated ${ok} stock price${ok>1?"s":""}`:"Price fetch failed — enter manually",ok?false:true);
-  }finally{fetchingPrices=false;}
+    const noKey=!quoteKey();
+    setPriceStatus(ok?`updated ${ok}/${syms.length} · ${new Date().toLocaleTimeString()}`:(noKey?"free price sources are blocked right now — add a Finnhub key (price source)":"couldn't reach Finnhub — check the key or your connection"));
+    if(manual)toast(ok?`Updated ${ok} stock price${ok>1?"s":""}`:(noKey?"Price fetch failed — tap “price source” to add a free Finnhub key":"Price fetch failed — check your Finnhub key"),ok?false:true);
+  }finally{fetchingPrices=false;if(refetchPrices){refetchPrices=false;fetchStockPrices(true);}}
 }
 /* ---- shared sortable-table helpers ---- */
 function cmpVals(x,y,dir){if(x==null)x=(typeof y==="string")?"":-Infinity;if(y==null)y=(typeof x==="string")?"":-Infinity;
@@ -2835,7 +2858,7 @@ function renderBuyDash(){
     <div class="sd-group" data-sdsec="04">
     <div class="sd-sec"><span class="hash">§ 04</span><b>ACTIVE POSITIONS</b><span class="mut sdcount">${d.openCount}</span><span class="secarrow" aria-hidden="true">▼</span></div>
     <div class="sd-body">
-    <p class="note" style="margin:0 0 8px">Enter a current price in <b>Mark</b> to see unrealized P&amp;L — saved locally, used across the app. <button class="iconbtn" id="refreshPrices">↻ refresh live stock prices</button> <span class="mut" id="priceStatus"></span></p>
+    <p class="note" style="margin:0 0 8px">Enter a current price in <b>Mark</b> to see unrealized P&amp;L — saved locally, used across the app. <button class="iconbtn" id="refreshPrices">↻ refresh live stock prices</button> <button class="iconbtn" id="priceKey" title="Set the live price source key">${quoteKey()?"⚙ price source":"⚙ price source (add key)"}</button> <span class="mut" id="priceStatus"></span></p>
     <div class="tablewrap"><table id="posTable"></table></div>
     </div></div>
     ${(()=>{const cb=costBasisRows();if(!cb.length)return "";
@@ -2865,6 +2888,7 @@ function renderBuyDash(){
   sdWireCharts("#buyDash","#bdTip");
   wireSdGroups(box,"buyside:");
   $("#refreshPrices").onclick=()=>fetchStockPrices(true);
+  $("#priceKey").onclick=setQuoteKey;
   box.querySelectorAll("[data-cbd]").forEach(b=>b.onclick=()=>{
     const [sym,kind]=b.dataset.cbd.split("|");
     const row=[...box.querySelectorAll(".cb-detail")].find(r=>r.dataset.cbsym===sym);if(!row)return;
