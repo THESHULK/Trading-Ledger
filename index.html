@@ -1258,11 +1258,21 @@ function requestToken(interactive){
 }
 async function ensureToken(interactive){if(gToken&&Date.now()<gTokenExp)return gToken;return requestToken(interactive);}
 function tokenValid(){return !!gToken&&Date.now()<gTokenExp;}
+// Google's hourly token ran out while the app was open. A new one needs a tap (no silent
+// renewal exists for a browser-only app), so pause syncing and say so plainly. Edits keep
+// saving locally and upload on the next reconnect.
+function driveExpired(){
+  gToken=null;clearToken();
+  if(!driveConnected)return;
+  driveConnected=false;driveNeedsReconnect=true;clearInterval(driveAutoTimer);
+  updateDriveUI();flashSaved();
+  toast("Google Drive session expired — tap Reconnect (Data tab) to resume syncing. Your edits are saved on this device.",true);
+}
 async function driveApi(url,opts={}){
-  if(!gToken||Date.now()>=gTokenExp)await ensureToken(false);
+  if(!gToken||Date.now()>=gTokenExp){driveExpired();throw new Error("drive session expired");}
   opts.headers=Object.assign({Authorization:"Bearer "+gToken},opts.headers||{});
-  let r=await fetch(url,opts);
-  if(r.status===401){gToken=null;clearToken();await ensureToken(false);opts.headers.Authorization="Bearer "+gToken;r=await fetch(url,opts);}
+  const r=await fetch(url,opts);
+  if(r.status===401){driveExpired();throw new Error("drive session expired");}
   return r;
 }
 async function driveFindFile(){
@@ -1306,7 +1316,7 @@ async function driveSync(){
       refreshAll();toast("Pulled latest from Google Drive");
     }else if(!remote||localT>remoteT){await driveUpload();}
     driveLastSync=Date.now();updateDriveUI();
-  }catch(e){updateDriveUI("sync error — try again");}
+  }catch(e){if(driveConnected)updateDriveUI("sync error — try again");}
   finally{driveBusy=false;}
 }
 function scheduleDriveWrite(){
@@ -1314,12 +1324,12 @@ function scheduleDriveWrite(){
   driveWriteTimer=setTimeout(async()=>{
     if(driveBusy)return;driveBusy=true;updateDriveUI("saving…");
     try{if(gFileId===null)await driveFindFile();await driveUpload();driveLastSync=Date.now();}
-    catch(e){updateDriveUI("sync error — try again");}
-    finally{driveBusy=false;updateDriveUI();}
+    catch(e){if(driveConnected)updateDriveUI("sync error — try again");}
+    finally{driveBusy=false;if(driveConnected)updateDriveUI();}
   },1500);
 }
 // background sync only runs while a valid token is already in hand — never force a refresh (and its popup) while idle
-function startDriveAuto(){clearInterval(driveAutoTimer);driveAutoTimer=setInterval(()=>{if(driveConnected&&!document.hidden&&tokenValid())driveSync();},120000);}
+function startDriveAuto(){clearInterval(driveAutoTimer);driveAutoTimer=setInterval(()=>{if(!driveConnected||document.hidden)return;if(tokenValid())driveSync();else driveExpired();},120000);}
 /* Popup-free sign-in: send the whole tab to Google and come back here with the token in
    the URL fragment (the OAuth 2.0 implicit flow). Used automatically in an installed PWA and
    when the popup fails; needs this page's URL under Authorized redirect URIs in the Client ID. */
@@ -1327,11 +1337,16 @@ const GSTATE_KEY="gdrive_state";
 // always one canonical address (…/index.html), however the app was opened, so Google
 // only needs a single "Authorized redirect URI" registered
 function driveRedirectUri(){return location.origin+location.pathname.replace(/index\.html$/,"").replace(/\/?$/,"/")+"index.html";}
+// true once Drive has been connected on this device: a renewal, not a first sign-in
+function driveReconnecting(){if(driveNeedsReconnect)return true;try{return localStorage.getItem("gdrive_on")==="1";}catch(e){return false;}}
 function driveRedirectUrl(){
   const st=Math.random().toString(36).slice(2)+Date.now().toString(36);
   try{sessionStorage.setItem(GSTATE_KEY,st);}catch(e){}
   const q=new URLSearchParams({client_id:GDRIVE_CLIENT_ID,redirect_uri:driveRedirectUri(),response_type:"token",
-    scope:GDRIVE_SCOPE,include_granted_scopes:"true",state:st,prompt:"select_account"});
+    scope:GDRIVE_SCOPE,include_granted_scopes:"true",state:st});
+  // first connect: let them pick the account. Renewing an hourly token: no prompt, so Google
+  // reuses the signed-in account and the consent already given and bounces straight back
+  if(!driveReconnecting())q.set("prompt","select_account");
   return "https://accounts.google.com/o/oauth2/v2/auth?"+q.toString();
 }
 function driveRedirectAuth(){if(!driveConfigured()){toast("Cloud sync isn't configured yet",true);return;}location.assign(driveRedirectUrl());}
@@ -1353,7 +1368,7 @@ async function driveConnect(){
   if(inStandaloneApp()){driveRedirectAuth();return;}   // popups are unreliable inside an installed app
   if(!driveConfigured()){toast("Cloud sync isn't configured yet",true);return;}
   if(!gisReady()){toast("Google sign-in still loading — try again",true);return;}
-  try{await ensureToken(true);driveConnected=true;try{localStorage.setItem("gdrive_on","1");}catch(e){}
+  try{await ensureToken(!driveReconnecting());driveConnected=true;driveNeedsReconnect=false;try{localStorage.setItem("gdrive_on","1");}catch(e){}
     updateDriveUI();flashSaved();await driveSync();startDriveAuto();toast("Connected to Google Drive");}
   catch(e){console.warn("Google Drive connect failed:",e);
     const t=e&&(e.type||e.error||"");
@@ -1402,7 +1417,7 @@ function updateDriveUI(msg){
     show("#driveConnect",false);show("#driveSyncNow",true);show("#driveDisconnect",true);
   }else{
     s.innerHTML=(driveNeedsReconnect
-      ?`<span class="neg">● Drive session expired</span> — sign in again to resume syncing. `
+      ?`<span class="neg">● Drive session expired</span> — Google's sign-in lasts one hour; tap Reconnect to pick up where you left off (one tap, no account chooser). Your edits are safe on this device and upload on reconnect. `
       :`Keep your ledger in <b>your own</b> Google Drive so it follows you across devices. Data goes only to your Drive — never to a server. `)+
       `<span class="mut">Blank sign-in window? Use <button class="iconbtn" id="driveNoPopup">sign in without a popup</button> (installed-app and mobile browsers often block popups).</span>`;
     const np=$("#driveNoPopup");if(np)np.onclick=driveRedirectAuth;
