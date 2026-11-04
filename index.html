@@ -98,6 +98,35 @@ nav button{
 }
 nav button:hover{color:var(--txt);background:var(--panel2);border-color:var(--line2)}
 nav button.on{color:var(--bg);background:var(--green);border-color:var(--green)}
+/* ---- add-a-trade shortcut: "+ Add" in the desktop tab strip, floating "+" on phones ---- */
+nav button.navadd{color:var(--green);border-color:var(--green-dim);font-family:var(--mono);font-weight:700;margin-left:6px}
+nav button.navadd:hover{background:var(--green-dim);color:var(--txt)}
+.fab{display:none;position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:60;width:54px;height:54px;border-radius:50%;
+  background:var(--green);color:var(--bg);border:0;font-size:30px;line-height:54px;text-align:center;font-weight:600;
+  box-shadow:0 8px 24px rgba(0,0,0,.45);cursor:pointer;transition:transform .15s,opacity .15s}
+.fab:active{transform:scale(.94)}
+body.form-visible .fab{opacity:0;pointer-events:none;transform:scale(.6)}
+.addmenu-overlay{position:fixed;inset:0;z-index:150;display:none;background:rgba(0,0,0,.35)}
+.addmenu-overlay.show{display:block}
+.addmenu{position:absolute;background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:8px;min-width:250px;
+  box-shadow:0 18px 50px rgba(0,0,0,.55);display:flex;flex-direction:column;gap:4px}
+.addmenu .amh{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);font-weight:700;padding:6px 10px 2px}
+.addmenu button{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:10px;
+  padding:11px 12px;color:var(--txt);font-size:14px;font-weight:600;cursor:pointer}
+.addmenu button:hover,.addmenu button:focus-visible{background:var(--panel2);border-color:var(--line2);outline:none}
+.addmenu button .ak{font-family:var(--mono);font-size:13px;font-weight:700;width:34px;height:34px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.addmenu button .ak.buy{background:var(--green-dim);color:var(--green)}
+.addmenu button .ak.sell{background:var(--red-dim);color:var(--red)}
+.addmenu button small{display:block;color:var(--muted);font-weight:400;font-size:11.5px;margin-top:1px}
+.addmenu button .cur{margin-left:auto;font-size:10px;color:var(--faint);letter-spacing:.08em;text-transform:uppercase}
+/* desktop: drop down under "+ Add"; phone: sheet above the floating button */
+.addmenu-overlay .addmenu{top:var(--am-top,60px);right:var(--am-right,22px)}
+@media(max-width:720px){
+  nav button.navadd{display:none}
+  .fab{display:block}
+  .addmenu-overlay .addmenu{top:auto;right:12px;left:12px;bottom:calc(84px + env(safe-area-inset-bottom));min-width:0}
+  .addmenu button{padding:14px 12px;font-size:15px}
+}
 .saved{font-family:var(--mono);font-size:10.5px;color:var(--faint);
   display:flex;align-items:center;gap:6px}
 .saved .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);flex:0 0 auto}
@@ -555,6 +584,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
     <button data-v="journal">Journal</button>
     <button data-v="prop">Prop Firm</button>
     <button data-v="data">Data</button>
+    <button id="navAdd" class="navadd" title="Add a trade (buy-side or sell-side)">+ Add</button>
   </nav>
   <div class="saved"><select id="themeSel" class="themesel" aria-label="Theme">
     <option value="oa">Orangutan Army</option>
@@ -951,6 +981,14 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 </main>
 
 <div class="toast" id="toast"></div>
+<button class="fab" id="fab" aria-label="Add a trade">+</button>
+<div class="addmenu-overlay" id="addMenu" role="dialog" aria-label="Add a trade">
+  <div class="addmenu">
+    <div class="amh">Add a trade</div>
+    <button data-add="buy"><span class="ak buy">BUY</span><span>Buy-side trade<small>stock, option, or futures you bought or shorted</small></span><span class="cur" id="amCurBuy"></span></button>
+    <button data-add="sell"><span class="ak sell">SELL</span><span>Sell-side trade<small>covered call, CSP, credit spread, iron condor</small></span><span class="cur" id="amCurSell"></span></button>
+  </div>
+</div>
 
 <div class="modal-overlay" id="whatsnewModal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="wnTitle">
@@ -3568,6 +3606,43 @@ function resetSpreadForm(){
   $("#cancelSpread").style.display="none";renderLegInputs();
 }
 // scroll a form panel into view just below the sticky header (not the page top, which now sits above the dashboard)
+/* ---- "+" shortcut: jump to the right Add form from anywhere ---- */
+function currentView(){const v=document.querySelector(".view.on");return v?v.id.replace("view-",""):"dash";}
+function openAddMenu(anchor){
+  const m=$("#addMenu");if(!m)return;
+  const cur=currentView();
+  $("#amCurBuy").textContent=cur==="trades"?"current tab":"";$("#amCurSell").textContent=cur==="spreads"?"current tab":"";
+  // desktop: hang the menu under the "+ Add" button
+  if(anchor&&anchor.id==="navAdd"){const r=anchor.getBoundingClientRect();m.style.setProperty("--am-top",(r.bottom+8)+"px");m.style.setProperty("--am-right",Math.max(8,window.innerWidth-r.right)+"px");}
+  m.classList.add("show");
+  const first=m.querySelector(cur==="spreads"?'[data-add="sell"]':'[data-add="buy"]');if(first)first.focus();
+}
+function closeAddMenu(){const m=$("#addMenu");if(m)m.classList.remove("show");}
+function goAddTrade(kind){
+  closeAddMenu();
+  if(kind==="sell"){
+    if(editSpreadId)resetSpreadForm();           // leave a half-typed new trade alone; only clear an edit
+    switchView("spreads");scrollToForm("#spreadFormTitle");setTimeout(()=>{const f=$("#sp-sym");if(f)f.focus();},250);
+  }else{
+    if(editId)resetForm();
+    switchView("trades");scrollToForm("#formTitle");setTimeout(()=>{const f=$("#f-sym");if(f)f.focus();},250);
+  }
+}
+function wireAddShortcut(){
+  const nb=$("#navAdd"),fab=$("#fab"),m=$("#addMenu");if(!m)return;
+  if(nb)nb.onclick=()=>openAddMenu(nb);
+  if(fab)fab.onclick=()=>openAddMenu(fab);
+  m.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>goAddTrade(b.dataset.add));
+  m.onclick=e=>{if(e.target===m)closeAddMenu();};
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&m.classList.contains("show"))closeAddMenu();});
+  // hide the floating button while an Add form is already on screen so it never covers Save
+  if(typeof IntersectionObserver!=="undefined"){
+    const vis=new Map();
+    const io=new IntersectionObserver(es=>{for(const e of es)vis.set(e.target,e.isIntersecting&&e.target.closest(".view").classList.contains("on"));
+      document.body.classList.toggle("form-visible",[...vis.values()].some(Boolean));},{threshold:0.15});
+    ["#formTitle","#spreadFormTitle"].forEach(sel=>{const el=$(sel);const p=el&&(el.closest(".panel")||el);if(p)io.observe(p);});
+  }
+}
 function scrollToForm(anchorSel){const el=$(anchorSel);if(!el)return;const p=el.closest(".panel")||el;
   const off=((($("header")||{}).offsetHeight)||56)+12;
   window.scrollTo({top:Math.max(0,p.getBoundingClientRect().top+window.scrollY-off),behavior:"smooth"});}
@@ -4411,7 +4486,7 @@ function welcomeSeen(){try{return localStorage.getItem(WELCOME_LS)==="1";}catch(
 function openWelcome(){const o=$("#welcomeModal");if(o)o.classList.add("show");}
 function closeWelcome(){const o=$("#welcomeModal");if(o)o.classList.remove("show");try{localStorage.setItem(WELCOME_LS,"1");}catch(e){}}
 function switchView(v){
-  document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
+  document.querySelectorAll("#nav button[data-v]").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
   document.querySelectorAll(".view").forEach(s=>s.classList.toggle("on",s.id==="view-"+v));
   if(v==="dash")renderDash();if(v==="trades"){renderTrades();renderPositions();}if(v==="spreads")renderSpreads();if(v==="prop")renderProp();
   if(v==="journal")renderJournal();
@@ -4429,7 +4504,8 @@ function init(){
   load();
   $("#f-date").value=today();
   syncFormFields();
-  document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>switchView(b.dataset.v));
+  document.querySelectorAll("#nav button[data-v]").forEach(b=>b.onclick=()=>switchView(b.dataset.v));
+  wireAddShortcut();
   const syncAiScope=()=>{const el=$("#aiScope");if(!el)return;el.value=instF;el.classList.toggle("prop",instF==="propfirm");};
   document.querySelectorAll("#instFilter button").forEach(b=>b.onclick=()=>{
     instF=b.dataset.i;document.querySelectorAll("#instFilter button").forEach(x=>x.classList.toggle("on",x===b));syncAiScope();renderDash();});
