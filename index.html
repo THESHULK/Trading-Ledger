@@ -101,6 +101,9 @@ nav button.on{color:var(--bg);background:var(--green);border-color:var(--green)}
 .saved{font-family:var(--mono);font-size:10.5px;color:var(--faint);
   display:flex;align-items:center;gap:6px}
 .saved .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);flex:0 0 auto}
+.saved.warn .dot{background:var(--orange);box-shadow:0 0 8px var(--orange);animation:savedPulse 1.4s ease-in-out infinite}
+.saved.warn #savedTxt{color:var(--orange);cursor:pointer;text-decoration:underline dotted;font-weight:600}
+@keyframes savedPulse{50%{opacity:.35}}
 #savedTxt{white-space:nowrap}
 @media(max-width:720px){
   /* extra top space so the theme dropdown clears the iPhone notch / browser chrome */
@@ -1216,9 +1219,12 @@ function setDemo(on){
   const st=document.getElementById("savedTxt");if(st)st.textContent=demoMode?"demo data (not saved)":settledSavedText();
   toast(demoMode?"Showing demo data — your real data is safe and returns when you switch off":"Back to your own data");
 }
-function settledSavedText(){return driveConnected?"☁ Google Drive":(fileConnected?("→ "+fileName):"saved locally");}
+function settledSavedText(){return driveConnected?"☁ Google Drive":driveNeedsReconnect?"☁ Drive expired — tap to reconnect":(fileConnected?("→ "+fileName):"saved locally");}
+// the header dot/text is visible on every tab, so it carries the reconnect prompt too
+function updateSavedBadge(){const b=document.querySelector(".saved");if(b)b.classList.toggle("warn",!driveConnected&&driveNeedsReconnect);}
 function flashSaved(){const t=document.getElementById("savedTxt");if(!t)return;
-  if(driveConnected||fileConnected){t.textContent=settledSavedText();}
+  updateSavedBadge();
+  if(driveConnected||fileConnected||driveNeedsReconnect){t.textContent=settledSavedText();}   // never paint over the reconnect prompt
   else{t.textContent="saved ✓";setTimeout(()=>{t.textContent=settledSavedText();},1200);}}
 
 /* ============================ GOOGLE DRIVE SYNC ============================ */
@@ -1266,7 +1272,7 @@ function driveExpired(){
   if(!driveConnected)return;
   driveConnected=false;driveNeedsReconnect=true;clearInterval(driveAutoTimer);
   updateDriveUI();flashSaved();
-  toast("Google Drive session expired — tap Reconnect (Data tab) to resume syncing. Your edits are saved on this device.",true);
+  toast("Google Drive sign-in expired — tap “☁ Drive expired” at the top to reconnect. Your edits are saved on this device.",true);
 }
 async function driveApi(url,opts={}){
   if(!gToken||Date.now()>=gTokenExp){driveExpired();throw new Error("drive session expired");}
@@ -1367,7 +1373,7 @@ function inStandaloneApp(){try{return (window.matchMedia&&matchMedia("(display-m
 async function driveConnect(){
   if(inStandaloneApp()){driveRedirectAuth();return;}   // popups are unreliable inside an installed app
   if(!driveConfigured()){toast("Cloud sync isn't configured yet",true);return;}
-  if(!gisReady()){toast("Google sign-in still loading — try again",true);return;}
+  if(!gisReady()){if(driveReconnecting()){driveRedirectAuth();return;}toast("Google sign-in still loading — try again",true);return;}
   try{await ensureToken(!driveReconnecting());driveConnected=true;driveNeedsReconnect=false;try{localStorage.setItem("gdrive_on","1");}catch(e){}
     updateDriveUI();flashSaved();await driveSync();startDriveAuto();toast("Connected to Google Drive");}
   catch(e){console.warn("Google Drive connect failed:",e);
@@ -1402,10 +1408,13 @@ function driveAutoResume(){
   // Only a still-valid cached token resumes silently. Asking Google for a new one here
   // would open a popup with no user gesture — browsers show that as a blank window that
   // never finishes — so an expired session just asks for a click instead.
-  if(!tokenValid()){driveNeedsReconnect=true;updateDriveUI();return;}
+  if(!tokenValid()){driveNeedsReconnect=true;updateDriveUI();toast("Google Drive sign-in expired — tap “☁ Drive expired” at the top to reconnect",true);return;}
   driveConnected=true;updateDriveUI();flashSaved();driveSync().catch(()=>{});startDriveAuto();
 }
+// coming back to a backgrounded tab/app: the hourly token may have lapsed while timers were paused
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&driveConnected&&!tokenValid())driveExpired();});
 function updateDriveUI(msg){
+  updateSavedBadge();const st=document.getElementById("savedTxt");if(st&&!demoMode)st.textContent=settledSavedText();
   const s=$("#driveStatus");if(!s)return;
   const show=(id,on)=>{const el=$(id);if(el)el.style.display=on?"":"none";};
   if(!driveConfigured()){
@@ -4554,6 +4563,7 @@ function init(){
   $("#fsDisconnect").onclick=disconnectFile;
   restoreFile();
   $("#driveConnect").onclick=driveConnect;
+  $("#savedTxt").onclick=()=>{if(!driveConnected&&driveNeedsReconnect)driveConnect();};
   $("#driveSyncNow").onclick=driveSync;
   $("#driveDisconnect").onclick=driveDisconnect;
   loadToken();if(!driveHandleRedirect()){updateDriveUI();driveAutoResume();}
