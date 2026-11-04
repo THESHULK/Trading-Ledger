@@ -130,8 +130,8 @@ body.form-visible .fab{opacity:0;pointer-events:none;transform:scale(.6)}
 .saved{font-family:var(--mono);font-size:10.5px;color:var(--faint);
   display:flex;align-items:center;gap:6px}
 .saved .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);flex:0 0 auto}
-.saved.warn .dot{background:var(--orange);box-shadow:0 0 8px var(--orange);animation:savedPulse 1.4s ease-in-out infinite}
-.saved.warn #savedTxt{color:var(--orange);cursor:pointer;text-decoration:underline dotted;font-weight:600}
+.saved.warn .dot{background:var(--amber);box-shadow:0 0 8px var(--amber);animation:savedPulse 1.4s ease-in-out infinite}
+.saved.warn #savedTxt{color:var(--amber);cursor:pointer;text-decoration:underline dotted;font-weight:600}
 @keyframes savedPulse{50%{opacity:.35}}
 #savedTxt{white-space:nowrap}
 @media(max-width:720px){
@@ -418,6 +418,19 @@ tr.open-row td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
   opacity:0;transition:.25s;z-index:100;box-shadow:0 8px 30px rgba(0,0,0,.6)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.err{border-color:var(--red-dim);color:var(--red)}
+.toast{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;max-width:min(560px,calc(100vw - 24px));line-height:1.4}
+.toast .tmsg{flex:1 1 auto;text-align:left;min-width:0}
+.toast.sticky .tmsg{flex-basis:100%}
+.toast .tclose{margin-left:auto}
+.toast .tact{flex:0 0 auto;background:var(--green);color:var(--bg);border:0;border-radius:7px;padding:7px 12px;font-family:var(--mono);font-size:12px;font-weight:700;cursor:pointer}
+.toast.err .tact{background:var(--amber)}
+.toast .tclose{flex:0 0 auto;background:transparent;border:0;color:inherit;opacity:.65;font-size:18px;line-height:1;padding:0 2px;cursor:pointer}
+.toast.sticky{cursor:pointer}
+@media(max-width:720px){
+  /* leave the bottom-right corner to the floating "+" and give the text room to wrap */
+  .toast{left:12px;right:82px;transform:translateY(20px);max-width:none;padding:12px 14px;font-size:13px}
+  .toast.show{transform:none}
+}
 /* ---- welcome modal ---- */
 .modal-overlay{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;
   background:rgba(0,0,0,.66);backdrop-filter:blur(3px);padding:20px;overflow-y:auto}
@@ -1257,7 +1270,7 @@ function setDemo(on){
   const st=document.getElementById("savedTxt");if(st)st.textContent=demoMode?"demo data (not saved)":settledSavedText();
   toast(demoMode?"Showing demo data — your real data is safe and returns when you switch off":"Back to your own data");
 }
-function settledSavedText(){return driveConnected?"☁ Google Drive":driveNeedsReconnect?"☁ Drive expired — tap to reconnect":(fileConnected?("→ "+fileName):"saved locally");}
+function settledSavedText(){return driveConnected?"☁ Google Drive":driveNeedsReconnect?"⚠ reconnect Drive":(fileConnected?("→ "+fileName):"saved locally");}
 // the header dot/text is visible on every tab, so it carries the reconnect prompt too
 function updateSavedBadge(){const b=document.querySelector(".saved");if(b)b.classList.toggle("warn",!driveConnected&&driveNeedsReconnect);}
 function flashSaved(){const t=document.getElementById("savedTxt");if(!t)return;
@@ -1310,7 +1323,7 @@ function driveExpired(){
   if(!driveConnected)return;
   driveConnected=false;driveNeedsReconnect=true;clearInterval(driveAutoTimer);
   updateDriveUI();flashSaved();
-  toast("Google Drive sign-in expired — tap “☁ Drive expired” at the top to reconnect. Your edits are saved on this device.",true);
+  toast("Google Drive sign-in expired. Your edits are safe on this device and will upload once you reconnect.",true,{sticky:true,action:{label:"Reconnect",onClick:driveConnect}});
 }
 async function driveApi(url,opts={}){
   if(!gToken||Date.now()>=gTokenExp){driveExpired();throw new Error("drive session expired");}
@@ -1446,7 +1459,7 @@ function driveAutoResume(){
   // Only a still-valid cached token resumes silently. Asking Google for a new one here
   // would open a popup with no user gesture — browsers show that as a blank window that
   // never finishes — so an expired session just asks for a click instead.
-  if(!tokenValid()){driveNeedsReconnect=true;updateDriveUI();toast("Google Drive sign-in expired — tap “☁ Drive expired” at the top to reconnect",true);return;}
+  if(!tokenValid()){driveNeedsReconnect=true;updateDriveUI();toast("Google Drive sign-in expired. Your edits are safe on this device and will upload once you reconnect.",true,{sticky:true,action:{label:"Reconnect",onClick:driveConnect}});return;}
   driveConnected=true;updateDriveUI();flashSaved();driveSync().catch(()=>{});startDriveAuto();
 }
 // coming back to a backgrounded tab/app: the hourly token may have lapsed while timers were paused
@@ -1598,8 +1611,19 @@ function futureDateOK(...dates){
   if(!bad.length)return true;
   return confirm(`Heads up — ${bad.length>1?"these dates are":"this date is"} in the future: ${bad.join(", ")}.\n\nFuture-dated entries are usually a typo and show up oddly on your P&L calendar. Save anyway?`);
 }
-function toast(msg,err){const t=$("#toast");t.textContent=msg;t.className="toast show"+(err?" err":"");
-  clearTimeout(t._t);t._t=setTimeout(()=>t.className="toast",2600);}
+/* toast(msg, err, {sticky, action:{label,onClick}})
+   - plain toasts stay long enough to read: ~2.6s + ~45ms per character past 40, capped at 8s
+   - sticky toasts stay until tapped, dismissed with ×, or the action button is used */
+function toast(msg,err,opts){const t=$("#toast");opts=opts||{};
+  t.innerHTML="";const sp=document.createElement("span");sp.className="tmsg";sp.textContent=msg;t.appendChild(sp);
+  if(opts.action){const b=document.createElement("button");b.className="tact";b.textContent=opts.action.label;
+    b.onclick=e=>{e.stopPropagation();hideToast();opts.action.onClick();};t.appendChild(b);}
+  if(opts.sticky){const x=document.createElement("button");x.className="tclose";x.setAttribute("aria-label","Dismiss");x.textContent="×";
+    x.onclick=e=>{e.stopPropagation();hideToast();};t.appendChild(x);}
+  t.className="toast show"+(err?" err":"")+(opts.sticky?" sticky":"");
+  t.onclick=opts.sticky?hideToast:null;
+  clearTimeout(t._t);if(!opts.sticky)t._t=setTimeout(hideToast,Math.min(8000,2600+Math.max(0,String(msg).length-40)*45));}
+function hideToast(){const t=$("#toast");if(!t)return;clearTimeout(t._t);t.className="toast";}
 // guard destructive actions; returns true only if the user confirms
 function confirmDelete(what){return window.confirm(`Delete ${what}?\n\nThis can't be undone.`);}
 function symLabel(t){if(t.instrument==="option")return `${t.symbol} ${t.expiry||""} ${t.strike??""}${(t.optionType||"")[0]?.toUpperCase()||""}`;return t.symbol;}
