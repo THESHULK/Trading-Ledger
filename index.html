@@ -2574,14 +2574,18 @@ let groupRT=(()=>{try{return localStorage.getItem("tape_group_rt")!=="0";}catch(
 let _ff=null; // pending refocus after re-render
 const tradeFilters={},spreadFilters={},propFilters={},posFilters={},propTradeFilters={};
 function attr(s){return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");}
-function distinctVals(arr,getv){return [...new Set(arr.map(getv).map(v=>v==null?"":String(v)).filter(v=>v!==""))].sort((a,b)=>a.localeCompare(b));}
+// dropdown filters: distinct non-empty values, plus a "(blank)" choice when some rows have no value
+const FILTER_BLANK="\u2205blank";   // ∅ — never a real account/type, survives innerHTML
+function distinctVals(arr,getv){const vals=arr.map(getv).map(v=>v==null?"":String(v).trim());
+  const out=[...new Set(vals.filter(v=>v!==""))].sort((a,b)=>a.localeCompare(b));
+  if(vals.some(v=>v===""))out.push(FILTER_BLANK);return out;}
 function headFilter(cols,sort,kinds,filters,distinct,hasActions){
   const row1=`<tr>`+thCells(cols,sort)+(hasActions?`<th>Actions</th>`:``)+`</tr>`;
   const row2=`<tr class="filterrow">`+cols.map(([c,,al])=>{
     const k=kinds[c],cl=al||"";
     if(k==="select"){const cur=filters[c]||"";
       return `<th class="${cl}"><select class="fsel" data-fcol="${c}"><option value="">All</option>`+
-        (distinct[c]||[]).map(o=>`<option value="${attr(o)}"${String(o)===cur?" selected":""}>${o}</option>`).join("")+`</select></th>`;}
+        (distinct[c]||[]).map(o=>`<option value="${attr(o)}"${String(o)===cur?" selected":""}>${o===FILTER_BLANK?"(blank)":o}</option>`).join("")+`</select></th>`;}
     if(k==="text")return `<th class="${cl}"><input class="ftext" data-fcol="${c}" placeholder="filter" title="Type to filter. For numbers use &lt;, &gt;, = — e.g. &lt;7, &gt;=30, =105" value="${attr(filters[c]||"")}"></th>`;
     return `<th class="${cl}"></th>`;
   }).join("")+(hasActions?`<th></th>`:``)+`</tr>`;
@@ -2589,8 +2593,8 @@ function headFilter(cols,sort,kinds,filters,distinct,hasActions){
 }
 function rowPasses(getVal,kinds,filters){
   for(const c in filters){const fv=filters[c];if(fv==null||fv==="")continue;
-    const raw=getVal(c),sv=String(raw==null?"":raw);
-    if(kinds[c]==="select"){if(sv!==fv)return false;continue;}
+    const raw=getVal(c),sv=String(raw==null?"":raw).trim();
+    if(kinds[c]==="select"){if(fv===FILTER_BLANK?sv!=="":sv!==fv)return false;continue;}
     // text filters accept a numeric comparison (e.g. <7, >=30, =105); otherwise substring match
     const op=String(fv).trim().match(/^(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)$/);
     if(op){const n=typeof raw==="number"?raw:parseFloat(raw);if(!isFinite(n))return false;
