@@ -1057,7 +1057,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
 <div class="modal-overlay" id="dupModal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dupTitle" style="max-width:640px">
     <h2 id="dupTitle">Duplicate entries</h2>
-    <p class="lead">Each group is the same entry saved more than once at different times, in the same account. The line under each lists exactly what matched, and each copy shows when it was entered. Untick anything that is a genuine separate trade. Removals sync to all your devices, and a backup is saved first.</p>
+    <p class="lead">Each group is the same entry saved more than once at different times, in the same account. The line under each lists what matched, and each copy shows when it was entered. Untick anything that is a genuine separate trade. Your choices sync to all your devices and you won't be asked about these entries again. A backup is saved before anything is removed.</p>
     <div id="dupList"></div>
     <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px"><button class="btn ghost" id="dupClose">Cancel</button><button class="btn" id="dupRemove">Remove</button></div>
   </div>
@@ -1242,13 +1242,13 @@ function migrateFutures(){
 
 /* ============================ STATE ============================ */
 const LS_KEY="tape.v1";
-let state={trades:[],marks:{},spreads:[],propfirm:[],notes:{},journal:{},chats:[],importKeys:{},propAccounts:{},seq:0,updatedAt:0,mt:{},del:{}};
+let state={trades:[],marks:{},spreads:[],propfirm:[],notes:{},journal:{},chats:[],importKeys:{},propAccounts:{},seq:0,updatedAt:0,mt:{},del:{},notDup:{}};
 let demoMode=false,demoBackup=null;   // demo preview never persists to storage or Drive
 const FS_OK = typeof window.showSaveFilePicker==="function";
 let fileHandle=null, fileName="", fileConnected=false, fileWriteTimer=null;
 
 function serialize(){return JSON.stringify(state,null,2);}
-function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.notes=(p.notes&&typeof p.notes==="object")?p.notes:{};state.journal=(p.journal&&typeof p.journal==="object")?p.journal:{};state.chats=Array.isArray(p.chats)?p.chats:[];state.importKeys=(p.importKeys&&typeof p.importKeys==="object")?p.importKeys:{};state.propAccounts=(p.propAccounts&&typeof p.propAccounts==="object")?p.propAccounts:{};state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;state.mt=(p.mt&&typeof p.mt==="object")?p.mt:{};state.del=(p.del&&typeof p.del==="object")?p.del:{};migrateFutures();syncBase=syncIndex(state);return true;}return false;}
+function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.notes=(p.notes&&typeof p.notes==="object")?p.notes:{};state.journal=(p.journal&&typeof p.journal==="object")?p.journal:{};state.chats=Array.isArray(p.chats)?p.chats:[];state.importKeys=(p.importKeys&&typeof p.importKeys==="object")?p.importKeys:{};state.propAccounts=(p.propAccounts&&typeof p.propAccounts==="object")?p.propAccounts:{};state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;state.mt=(p.mt&&typeof p.mt==="object")?p.mt:{};state.del=(p.del&&typeof p.del==="object")?p.del:{};state.notDup=(p.notDup&&typeof p.notDup==="object")?p.notDup:{};migrateFutures();syncBase=syncIndex(state);return true;}return false;}
 
 function load(){try{const r=localStorage.getItem(LS_KEY);if(r)applyParsed(JSON.parse(r));}catch(e){}if(!syncBase)syncBase=syncIndex(state);}
 function save(){
@@ -1268,7 +1268,7 @@ function save(){
    Syncing merges two copies record by record: the most recently edited version of each record
    wins, records added on either device are kept, and only an explicit delete removes one.
    Nothing is ever replaced wholesale. */
-const SYNC_ARR=["trades","spreads","propfirm","chats"],SYNC_MAP=["notes","journal","marks","importKeys","propAccounts"],SYNC_SEP="\u0001";
+const SYNC_ARR=["trades","spreads","propfirm","chats"],SYNC_MAP=["notes","journal","marks","importKeys","propAccounts","notDup"],SYNC_SEP="\u0001";
 let syncBase=null;   // Map key→JSON of the records as last saved/loaded on this device
 function syncIndex(o){const m=new Map();if(!o)return m;
   for(const c of SYNC_ARR)for(const r of (Array.isArray(o[c])?o[c]:[]))if(r&&r.id!=null)m.set(c+SYNC_SEP+r.id,JSON.stringify(r));
@@ -1459,7 +1459,7 @@ async function driveUpload(){
   }
   return driveCreate();
 }
-let drivePending=false;
+let drivePending=false,dupCheckAfterFirstSync=false;
 // Download → merge record by record → write back only what changed. Every save goes through
 // here, so a device holding an older copy can never overwrite edits made elsewhere.
 async function driveSync(){
@@ -1486,7 +1486,7 @@ async function driveSync(){
         await backupSnapshot("This device, before syncing with Drive",local);
         applyingRemote=true;applyParsed(data);stampChanges();applyingRemote=false;
         try{localStorage.setItem(LS_KEY,serialize());}catch(e){}
-        refreshAll();toast("Synced changes from Google Drive");setTimeout(checkDuplicatesAfterSync,2500);}
+        refreshAll();toast("Synced changes from Google Drive");dupCheckAfterFirstSync=true;}
       if(ledgerSig(remote)!==sig||files.length>1){
         // another device may have saved while we were merging: if so, merge again rather than overwrite
         const now=await driveListFiles();
@@ -1500,6 +1500,7 @@ async function driveSync(){
     }
     break;}
     driveLastSync=Date.now();updateDriveUI();
+    if(dupCheckAfterFirstSync){dupCheckAfterFirstSync=false;setTimeout(checkDuplicatesAfterSync,2500);}
   }catch(e){console.warn("Drive sync failed",e);if(driveConnected)updateDriveUI("sync error — try again");}
   finally{driveBusy=false;}
   if(drivePending&&driveConnected)return driveSync();   // an edit landed mid-sync: run again now
@@ -1583,6 +1584,10 @@ function dupKey(c,r){const o={};for(const k of Object.keys(r).sort()){if(DUP_IGN
 function dupScore(c,r){let n=0;for(const k in r){const v=r[k];if(v!=null&&v!==""&&v!==0)n++;}
   if(Array.isArray(r.legs))for(const l of r.legs)if(l&&l.close!=null&&l.close!=="")n++;
   return n*1e13+num((state.mt||{})[c+SYNC_SEP+r.id],0);}
+// "kept as separate" decisions, one per pair of copies, synced to every device
+function dupPair(c,a,b){return c+":"+[String(a),String(b)].sort().join("|");}
+function dupReviewed(c,list){const nd=state.notDup||{};
+  for(let i=0;i<list.length;i++)for(let j=i+1;j<list.length;j++)if(!nd[dupPair(c,list[i].id,list[j].id)])return false;return true;}
 function findDuplicates(){const groups=[];
   for(const c of Object.keys(DUP_IGNORE)){const by=new Map();
     for(const r of (state[c]||[])){if(!r||r.id==null)continue;const k=dupKey(c,r);if(!by.has(k))by.set(k,[]);by.get(k).push(r);}
@@ -1591,6 +1596,7 @@ function findDuplicates(){const groups=[];
       // action (e.g. identical fills in a CSV) — those are real separate trades, not re-entries
       const ts=list.map(dupCreated);
       if(ts.every(t=>t!=null)&&Math.max(...ts)-Math.min(...ts)<120000)continue;
+      if(dupReviewed(c,list))continue;
       const sorted=list.slice().sort((a,b)=>dupScore(c,b)-dupScore(c,a));
       const order=Object.keys(DUP_FIELD_NAMES);
       const matched=Object.keys(JSON.parse(dupKey(c,list[0]))).sort((a,b)=>(order.indexOf(a)+99)%99-(order.indexOf(b)+99)%99).map(k=>DUP_FIELD_NAMES[k]||k);
@@ -1615,23 +1621,27 @@ let dupGroups=[];
 function openDuplicates(){
   dupGroups=findDuplicates();const m=$("#dupModal"),box=$("#dupList");m.classList.add("show");
   const names={trades:"Buy-side",spreads:"Sell-side",propfirm:"Prop firm"};
-  if(!dupGroups.length){box.innerHTML=`<p class="mut">No duplicate entries found.</p>`;$("#dupRemove").style.display="none";return;}
+  if(!dupGroups.length){box.innerHTML=`<p class="mut">No duplicate entries to review. Entries you've already reviewed aren't shown again.</p>`;$("#dupRemove").style.display="none";return;}
   $("#dupRemove").style.display="";
   box.innerHTML=dupGroups.map((g,gi)=>`<div class="dup-grp"><div class="dup-h">${names[g.c]} · ${g.recs.length} copies</div><div class="dup-what">${esc(dupLabel(g.c,g.recs[0]))}${(g.recs[0].account||"").trim()?" · "+esc(g.recs[0].account.trim()):""}</div><div class="dup-why">Same ${esc(g.matched.join(", "))}</div>`+
     g.recs.map(r=>`<label class="dup-row"><input type="checkbox" data-dg="${gi}" data-did="${attr(r.id)}"${r.id===g.keep?"":" checked"}>
       <span><b>${r.id===g.keep?"Keep":"Remove"}</b> <span class="mut">${esc(dupDetail(g.c,r))}</span></span></label>`).join("")+`</div>`).join("");
   const sync=()=>{let n=0;box.querySelectorAll("input[data-dg]").forEach(cb=>{cb.parentElement.querySelector("b").textContent=cb.checked?"Remove":"Keep";if(cb.checked)n++;});
-    $("#dupRemove").textContent=n?`Remove ${n} duplicate${n===1?"":"s"}`:"Nothing selected";$("#dupRemove").disabled=!n;};
+    $("#dupRemove").textContent=n?`Remove ${n} & keep the rest`:"Keep all as separate trades";$("#dupRemove").disabled=false;};
   box.querySelectorAll("input[data-dg]").forEach(cb=>cb.onchange=()=>{
     // never let a whole group be removed
     const g=[...box.querySelectorAll(`input[data-dg="${cb.dataset.dg}"]`)];if(g.every(x=>x.checked)){cb.checked=false;toast("Keep at least one copy of each entry");}sync();});
   sync();}
 function removeDuplicates(){
-  const box=$("#dupList");const chosen=[...box.querySelectorAll("input[data-dg]:checked")];if(!chosen.length)return;
-  backupSnapshot("This device, before removing duplicates",JSON.parse(serialize()));
-  let n=0;
+  const box=$("#dupList");const chosen=[...box.querySelectorAll("input[data-dg]:checked")];
+  if(chosen.length)backupSnapshot("This device, before removing duplicates",JSON.parse(serialize()));
+  let n=0,kept=0;if(!state.notDup||typeof state.notDup!=="object")state.notDup={};
   for(const [gi,g] of dupGroups.entries()){
-    const rm=new Set(chosen.filter(cb=>+cb.dataset.dg===gi).map(cb=>cb.dataset.did));if(!rm.size)continue;
+    const rm=new Set(chosen.filter(cb=>+cb.dataset.dg===gi).map(cb=>cb.dataset.did));
+    // whatever is left in a reviewed group is a set of separate trades: remember that, everywhere
+    const left=g.recs.filter(r=>!rm.has(r.id));
+    for(let i=0;i<left.length;i++)for(let j=i+1;j<left.length;j++){state.notDup[dupPair(g.c,left[i].id,left[j].id)]=Date.now();kept++;}
+    if(!rm.size)continue;
     const keep=g.recs.find(r=>!rm.has(r.id));if(!keep)continue;
     for(const id of rm){
       // carry a note over if the kept copy has none, and repoint rolls at the kept copy
@@ -1643,9 +1653,10 @@ function removeDuplicates(){
       n++;}
     state[g.c]=state[g.c].filter(r=>!rm.has(r.id));}
   save();refreshAll();$("#dupModal").classList.remove("show");
-  toast(`Removed ${n} duplicate${n===1?"":"s"}. A backup was saved first (Data → Recover lost edits).`);}
+  toast(n?`Removed ${n} duplicate${n===1?"":"s"}. A backup was saved first (Data → Recover lost edits). You won't be asked about these again.`
+    :"Saved. These entries are marked as separate trades and won't be flagged again on any device.");}
 // after a sync brings records in, point out any duplicates once
-function checkDuplicatesAfterSync(){const g=findDuplicates();if(!g.length)return;
+function checkDuplicatesAfterSync(){if(demoMode||$("#dupModal").classList.contains("show"))return;const g=findDuplicates();if(!g.length)return;
   const sig=g.map(x=>x.recs.map(r=>r.id).sort().join("+")).sort().join("|");
   try{if(localStorage.getItem("dupDismissed")===sig)return;localStorage.setItem("dupDismissed",sig);}catch(e){}
   const n=g.reduce((a,x)=>a+x.recs.length-1,0);
@@ -4944,7 +4955,9 @@ function init(){
   $("#driveSyncNow").onclick=driveSync;
   $("#driveDisconnect").onclick=driveDisconnect;
   loadToken();if(!driveHandleRedirect()){updateDriveUI();driveAutoResume();}
-  setTimeout(()=>{if(!demoMode)checkDuplicatesAfterSync();},4000);   // flag duplicates left by an earlier merge
+  // flag duplicates left by an earlier merge — after the first Drive sync if connected, since
+  // another device may already have reviewed them
+  setTimeout(()=>{if(!driveConnected)checkDuplicatesAfterSync();else dupCheckAfterFirstSync=true;},4000);
   $("#clearAll").onclick=()=>{if(confirm("Delete ALL trades and marks? This cannot be undone."))
     {state={trades:[],marks:{},spreads:[],propfirm:[],seq:0};save();refreshAll();toast("All data deleted");}};
   window.addEventListener("resize",()=>{if($("#view-dash").classList.contains("on"))renderDash();
