@@ -418,6 +418,12 @@ tr.open-row td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
   opacity:0;transition:.25s;z-index:100;box-shadow:0 8px 30px rgba(0,0,0,.6)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.err{border-color:var(--red-dim);color:var(--red)}
+.dup-grp{border:1px solid var(--line);border-radius:11px;padding:10px 12px;margin-bottom:10px;background:var(--bg2)}
+.dup-h{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:700}
+.dup-what{font-family:var(--mono);font-size:12.5px;margin:4px 0 6px;color:var(--txt)}
+.dup-row{display:flex;gap:10px;align-items:flex-start;padding:6px 0;font-size:12.5px;cursor:pointer}
+.dup-row input{margin-top:2px}
+.dup-row .mut{font-size:11.5px}
 .rcv-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line);font-size:13px}
 .rcv-row:first-child{border-top:0}
 .rcv-row .mut{font-size:11.5px}
@@ -952,6 +958,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
         <button class="btn" id="driveConnect">Connect Google Drive</button>
         <button class="btn ghost" id="driveSyncNow" style="display:none">Sync now</button>
         <button class="btn ghost" id="driveDisconnect" style="display:none">Disconnect</button>
+        <button class="btn ghost" id="dupOpen" title="Find entries that were added twice, e.g. on two devices">Find duplicates…</button>
         <button class="btn ghost" id="recoverOpen" title="Bring back edits from Drive's version history or this device's automatic backups">Recover lost edits…</button>
       </div>
     </div>
@@ -1046,6 +1053,14 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
   </div>
 </div>
 
+<div class="modal-overlay" id="dupModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dupTitle" style="max-width:640px">
+    <h2 id="dupTitle">Duplicate entries</h2>
+    <p class="lead">These entries match on date, symbol, side, quantity and price. The most complete copy of each is kept. Untick anything that is a genuine separate trade. Removals sync to all your devices, and a backup is saved first.</p>
+    <div id="dupList"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px"><button class="btn ghost" id="dupClose">Cancel</button><button class="btn" id="dupRemove">Remove</button></div>
+  </div>
+</div>
 <div class="modal-overlay" id="recoverModal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="recoverTitle" style="max-width:640px">
     <h2 id="recoverTitle">Recover lost edits</h2>
@@ -1470,7 +1485,7 @@ async function driveSync(){
         await backupSnapshot("This device, before syncing with Drive",local);
         applyingRemote=true;applyParsed(data);stampChanges();applyingRemote=false;
         try{localStorage.setItem(LS_KEY,serialize());}catch(e){}
-        refreshAll();toast("Synced changes from Google Drive");}
+        refreshAll();toast("Synced changes from Google Drive");setTimeout(checkDuplicatesAfterSync,2500);}
       if(ledgerSig(remote)!==sig||files.length>1){
         // another device may have saved while we were merging: if so, merge again rather than overwrite
         const now=await driveListFiles();
@@ -1549,6 +1564,80 @@ async function recoverAct(i,act,btn){const it=recoverItems[i];if(!it)return;
     applyMergeIn(pv.data);closeRecover();toast(`Restored ${pv.added} record${pv.added===1?"":"s"} and ${pv.changed} version${pv.changed===1?"":"s"} from ${new Date(it.at).toLocaleDateString()}`);
   }catch(e){toast("Couldn't read that copy ("+(e.message||e)+")",true);}finally{btn.disabled=false;}}
 function closeRecover(){const m=$("#recoverModal");if(m)m.classList.remove("show");}
+/* ---- duplicate finder ----
+   The same trade entered on two devices gets two ids, so a merge keeps both. Group records whose
+   substance matches (ignoring id, account, fees, closing details and other bookkeeping) and let
+   the user remove the extras. Removals are ordinary deletes, so they sync everywhere. */
+const DUP_IGNORE={trades:["id","_seq","account","fees","multiplier","exit","rolledFrom"],spreads:["id","account","fees","status","dateClosed","rolledFrom"],propfirm:["id"]};
+function dupNorm(v){if(v==null||v==="")return null;if(typeof v==="number")return Math.round(v*1e6)/1e6;
+  if(typeof v==="string"){const t=v.trim();const n=Number(t);return t!==""&&isFinite(n)?Math.round(n*1e6)/1e6:t.toUpperCase();}
+  if(Array.isArray(v))return v.map(dupNorm);
+  if(typeof v==="object"){const o={};for(const k of Object.keys(v).sort())if(k!=="close")o[k]=dupNorm(v[k]);return o;}return v;}
+function dupKey(c,r){const o={};for(const k of Object.keys(r).sort()){if(DUP_IGNORE[c].includes(k)||k.startsWith("_"))continue;const v=dupNorm(r[k]);if(v!=null)o[k]=v;}return JSON.stringify(o);}
+// how "complete" a copy is: filled-in fields count, and a later edit breaks ties
+function dupScore(c,r){let n=0;for(const k in r){const v=r[k];if(v!=null&&v!==""&&v!==0)n++;}
+  if(Array.isArray(r.legs))for(const l of r.legs)if(l&&l.close!=null&&l.close!=="")n++;
+  return n*1e13+num((state.mt||{})[c+SYNC_SEP+r.id],0);}
+function findDuplicates(){const groups=[];
+  for(const c of Object.keys(DUP_IGNORE)){const by=new Map();
+    for(const r of (state[c]||[])){if(!r||r.id==null)continue;const k=dupKey(c,r);if(!by.has(k))by.set(k,[]);by.get(k).push(r);}
+    for(const list of by.values())if(list.length>1){
+      const sorted=list.slice().sort((a,b)=>dupScore(c,b)-dupScore(c,a));
+      groups.push({c,keep:sorted[0].id,recs:sorted});}}
+  return groups;}
+function dupLabel(c,r){
+  if(c==="trades"){const p=r.instrument==="future"?`entry ${r.entry??"?"}`:`@ ${r.price}`;
+    const o=r.instrument==="option"?` ${r.strike}${(r.optionType||"").charAt(0).toUpperCase()} ${r.expiry||""}`:"";
+    return `${r.date} · ${String(r.symbol||"").toUpperCase()}${o} · ${r.action} ${r.quantity} ${p}`;}
+  if(c==="spreads"){const legs=(r.legs||[]).map(l=>(l.side==="short"?"-":"+")+(l.optionType||"").charAt(0).toUpperCase()+" "+l.strike).join(" ");
+    return `${r.dateOpened} · ${r.type} ${String(r.symbol||"").toUpperCase()} ${legs} · exp ${r.expiry||"—"} · ×${r.quantity}`;}
+  return `${r.date} · ${r.type||"prop"} · ${r.amount}`;}
+function dupDetail(c,r){const bits=[];
+  bits.push("account: "+((r.account||"").trim()||"blank"));
+  if(r.fees)bits.push("fees "+r.fees);
+  if(c==="spreads")bits.push(r.status==="closed"?"closed "+(r.dateClosed||""):"open");
+  if(c==="trades"&&r.instrument==="future")bits.push(r.exit==null?"open":"exit "+r.exit);
+  if((state.notes||{})[r.id])bits.push("has a note");
+  return bits.join(" · ");}
+let dupGroups=[];
+function openDuplicates(){
+  dupGroups=findDuplicates();const m=$("#dupModal"),box=$("#dupList");m.classList.add("show");
+  const names={trades:"Buy-side",spreads:"Sell-side",propfirm:"Prop firm"};
+  if(!dupGroups.length){box.innerHTML=`<p class="mut">No duplicate entries found.</p>`;$("#dupRemove").style.display="none";return;}
+  $("#dupRemove").style.display="";
+  box.innerHTML=dupGroups.map((g,gi)=>`<div class="dup-grp"><div class="dup-h">${names[g.c]} · ${g.recs.length} copies</div><div class="dup-what">${esc(dupLabel(g.c,g.recs[0]))}</div>`+
+    g.recs.map(r=>`<label class="dup-row"><input type="checkbox" data-dg="${gi}" data-did="${attr(r.id)}"${r.id===g.keep?"":" checked"}>
+      <span><b>${r.id===g.keep?"Keep":"Remove"}</b> <span class="mut">${esc(dupDetail(g.c,r))}</span></span></label>`).join("")+`</div>`).join("");
+  const sync=()=>{let n=0;box.querySelectorAll("input[data-dg]").forEach(cb=>{cb.parentElement.querySelector("b").textContent=cb.checked?"Remove":"Keep";if(cb.checked)n++;});
+    $("#dupRemove").textContent=n?`Remove ${n} duplicate${n===1?"":"s"}`:"Nothing selected";$("#dupRemove").disabled=!n;};
+  box.querySelectorAll("input[data-dg]").forEach(cb=>cb.onchange=()=>{
+    // never let a whole group be removed
+    const g=[...box.querySelectorAll(`input[data-dg="${cb.dataset.dg}"]`)];if(g.every(x=>x.checked)){cb.checked=false;toast("Keep at least one copy of each entry");}sync();});
+  sync();}
+function removeDuplicates(){
+  const box=$("#dupList");const chosen=[...box.querySelectorAll("input[data-dg]:checked")];if(!chosen.length)return;
+  backupSnapshot("This device, before removing duplicates",JSON.parse(serialize()));
+  let n=0;
+  for(const [gi,g] of dupGroups.entries()){
+    const rm=new Set(chosen.filter(cb=>+cb.dataset.dg===gi).map(cb=>cb.dataset.did));if(!rm.size)continue;
+    const keep=g.recs.find(r=>!rm.has(r.id));if(!keep)continue;
+    for(const id of rm){
+      // carry a note over if the kept copy has none, and repoint rolls at the kept copy
+      if(state.notes&&state.notes[id]){if(!state.notes[keep.id])state.notes[keep.id]=state.notes[id];delete state.notes[id];}
+      for(const c of ["trades","spreads"])for(const r of state[c])if(r.rolledFrom===id)r.rolledFrom=keep.id;
+      // fill blanks on the kept copy from the removed one (e.g. an account entered on only one device)
+      const gone=g.recs.find(r=>r.id===id);
+      if(gone&&!(keep.account||"").trim()&&(gone.account||"").trim())keep.account=gone.account;
+      n++;}
+    state[g.c]=state[g.c].filter(r=>!rm.has(r.id));}
+  save();refreshAll();$("#dupModal").classList.remove("show");
+  toast(`Removed ${n} duplicate${n===1?"":"s"}. A backup was saved first (Data → Recover lost edits).`);}
+// after a sync brings records in, point out any duplicates once
+function checkDuplicatesAfterSync(){const g=findDuplicates();if(!g.length)return;
+  const sig=g.map(x=>x.recs.map(r=>r.id).sort().join("+")).sort().join("|");
+  try{if(localStorage.getItem("dupDismissed")===sig)return;localStorage.setItem("dupDismissed",sig);}catch(e){}
+  const n=g.reduce((a,x)=>a+x.recs.length-1,0);
+  toast(`Found ${n} possible duplicate entr${n===1?"y":"ies"}, likely the same trade entered on two devices.`,true,{sticky:true,action:{label:"Review",onClick:openDuplicates}});}
 // background sync only runs while a valid token is already in hand — never force a refresh (and its popup) while idle
 function startDriveAuto(){clearInterval(driveAutoTimer);driveAutoTimer=setInterval(()=>{if(!driveConnected||document.hidden)return;if(tokenValid())driveSync();else driveExpired();},120000);}
 /* Popup-free sign-in: send the whole tab to Google and come back here with the token in
@@ -4833,13 +4922,17 @@ function init(){
   $("#fsDisconnect").onclick=disconnectFile;
   restoreFile();
   $("#driveConnect").onclick=driveConnect;
-  $("#recoverOpen").onclick=openRecover;$("#recoverClose").onclick=closeRecover;
+  $("#recoverOpen").onclick=openRecover;
+  $("#dupOpen").onclick=openDuplicates;$("#dupClose").onclick=()=>$("#dupModal").classList.remove("show");$("#dupRemove").onclick=removeDuplicates;
+  $("#dupModal").onclick=e=>{if(e.target.id==="dupModal")$("#dupModal").classList.remove("show");};
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#dupModal").classList.contains("show"))$("#dupModal").classList.remove("show");});$("#recoverClose").onclick=closeRecover;
   $("#recoverModal").onclick=e=>{if(e.target.id==="recoverModal")closeRecover();};
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#recoverModal").classList.contains("show"))closeRecover();});
   $("#savedTxt").onclick=()=>{if(!driveConnected&&driveNeedsReconnect)driveConnect();};
   $("#driveSyncNow").onclick=driveSync;
   $("#driveDisconnect").onclick=driveDisconnect;
   loadToken();if(!driveHandleRedirect()){updateDriveUI();driveAutoResume();}
+  setTimeout(()=>{if(!demoMode)checkDuplicatesAfterSync();},4000);   // flag duplicates left by an earlier merge
   $("#clearAll").onclick=()=>{if(confirm("Delete ALL trades and marks? This cannot be undone."))
     {state={trades:[],marks:{},spreads:[],propfirm:[],seq:0};save();refreshAll();toast("All data deleted");}};
   window.addEventListener("resize",()=>{if($("#view-dash").classList.contains("on"))renderDash();
