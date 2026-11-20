@@ -418,6 +418,11 @@ tr.open-row td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
   opacity:0;transition:.25s;z-index:100;box-shadow:0 8px 30px rgba(0,0,0,.6)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.err{border-color:var(--red-dim);color:var(--red)}
+.rcv-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line);font-size:13px}
+.rcv-row:first-child{border-top:0}
+.rcv-row .mut{font-size:11.5px}
+.rcv-acts{display:flex;gap:8px;align-items:center;flex:0 0 auto}
+.btn.sm{padding:6px 10px;font-size:12px}
 .toast{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;max-width:min(560px,calc(100vw - 24px));line-height:1.4}
 .toast .tmsg{flex:1 1 auto;text-align:left;min-width:0}
 .toast.sticky .tmsg{flex-basis:100%}
@@ -947,6 +952,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
         <button class="btn" id="driveConnect">Connect Google Drive</button>
         <button class="btn ghost" id="driveSyncNow" style="display:none">Sync now</button>
         <button class="btn ghost" id="driveDisconnect" style="display:none">Disconnect</button>
+        <button class="btn ghost" id="recoverOpen" title="Bring back edits from Drive's version history or this device's automatic backups">Recover lost edits…</button>
       </div>
     </div>
     <div class="panel">
@@ -1040,6 +1046,14 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
   </div>
 </div>
 
+<div class="modal-overlay" id="recoverModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="recoverTitle" style="max-width:640px">
+    <h2 id="recoverTitle">Recover lost edits</h2>
+    <p class="lead">Pick an earlier copy and <b>Merge in</b> to bring back anything it has that your ledger is missing. Nothing is deleted, and your current ledger is backed up first. Google Drive keeps versions for about 30 days.</p>
+    <div id="recoverList"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn ghost" id="recoverClose">Close</button></div>
+  </div>
+</div>
 <div class="modal-overlay" id="noteModal">
   <div class="modal notem" role="dialog" aria-modal="true" aria-labelledby="noteTitle">
     <h2 id="noteTitle">Trade note</h2>
@@ -1212,23 +1226,89 @@ function migrateFutures(){
 
 /* ============================ STATE ============================ */
 const LS_KEY="tape.v1";
-let state={trades:[],marks:{},spreads:[],propfirm:[],notes:{},journal:{},chats:[],importKeys:{},propAccounts:{},seq:0,updatedAt:0};
+let state={trades:[],marks:{},spreads:[],propfirm:[],notes:{},journal:{},chats:[],importKeys:{},propAccounts:{},seq:0,updatedAt:0,mt:{},del:{}};
 let demoMode=false,demoBackup=null;   // demo preview never persists to storage or Drive
 const FS_OK = typeof window.showSaveFilePicker==="function";
 let fileHandle=null, fileName="", fileConnected=false, fileWriteTimer=null;
 
 function serialize(){return JSON.stringify(state,null,2);}
-function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.notes=(p.notes&&typeof p.notes==="object")?p.notes:{};state.journal=(p.journal&&typeof p.journal==="object")?p.journal:{};state.chats=Array.isArray(p.chats)?p.chats:[];state.importKeys=(p.importKeys&&typeof p.importKeys==="object")?p.importKeys:{};state.propAccounts=(p.propAccounts&&typeof p.propAccounts==="object")?p.propAccounts:{};state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;migrateFutures();return true;}return false;}
+function applyParsed(p){if(p&&Array.isArray(p.trades)){state.trades=p.trades;state.marks=p.marks||{};state.spreads=Array.isArray(p.spreads)?p.spreads:[];state.propfirm=Array.isArray(p.propfirm)?p.propfirm:[];state.notes=(p.notes&&typeof p.notes==="object")?p.notes:{};state.journal=(p.journal&&typeof p.journal==="object")?p.journal:{};state.chats=Array.isArray(p.chats)?p.chats:[];state.importKeys=(p.importKeys&&typeof p.importKeys==="object")?p.importKeys:{};state.propAccounts=(p.propAccounts&&typeof p.propAccounts==="object")?p.propAccounts:{};state.seq=p.seq||p.trades.length;state.updatedAt=p.updatedAt||0;state.mt=(p.mt&&typeof p.mt==="object")?p.mt:{};state.del=(p.del&&typeof p.del==="object")?p.del:{};migrateFutures();syncBase=syncIndex(state);return true;}return false;}
 
-function load(){try{const r=localStorage.getItem(LS_KEY);if(r)applyParsed(JSON.parse(r));}catch(e){}}
+function load(){try{const r=localStorage.getItem(LS_KEY);if(r)applyParsed(JSON.parse(r));}catch(e){}if(!syncBase)syncBase=syncIndex(state);}
 function save(){
   if(demoMode)return;   // never persist demo data or edits made while previewing it
-  if(!applyingRemote)state.updatedAt=Date.now();
+  const ch=stampChanges();
+  // "last updated" means a real edit; refreshed stock prices alone must not make this copy look newer
+  if(!applyingRemote&&ch.edits)state.updatedAt=Date.now();
   try{localStorage.setItem(LS_KEY,serialize());}catch(e){toast("Browser storage blocked",true);}
   if(fileConnected)scheduleFileWrite();
-  if(driveConnected&&!applyingRemote)scheduleDriveWrite();
+  if(driveConnected&&!applyingRemote&&ch.any)scheduleDriveWrite();
   flashSaved();
 }
+/* ============ RECORD-LEVEL SYNC ============
+   Every trade, sell-side position, prop entry, chat, note, journal day, mark and setting is a
+   separate record keyed "collection<SEP>id". save() compares the ledger with the last saved
+   copy and stamps each record that changed (state.mt) or disappeared (state.del, a tombstone).
+   Syncing merges two copies record by record: the most recently edited version of each record
+   wins, records added on either device are kept, and only an explicit delete removes one.
+   Nothing is ever replaced wholesale. */
+const SYNC_ARR=["trades","spreads","propfirm","chats"],SYNC_MAP=["notes","journal","marks","importKeys","propAccounts"],SYNC_SEP="\u0001";
+let syncBase=null;   // Map key→JSON of the records as last saved/loaded on this device
+function syncIndex(o){const m=new Map();if(!o)return m;
+  for(const c of SYNC_ARR)for(const r of (Array.isArray(o[c])?o[c]:[]))if(r&&r.id!=null)m.set(c+SYNC_SEP+r.id,JSON.stringify(r));
+  for(const c of SYNC_MAP){const mp=o[c];if(mp&&typeof mp==="object")for(const k of Object.keys(mp))m.set(c+SYNC_SEP+k,JSON.stringify(mp[k]));}
+  return m;}
+function stampChanges(){
+  const cur=syncIndex(state),now=Date.now();let any=false,edits=false;
+  if(!state.mt||typeof state.mt!=="object")state.mt={};if(!state.del||typeof state.del!=="object")state.del={};
+  if(syncBase&&!applyingRemote){
+    for(const [k,v] of cur)if(syncBase.get(k)!==v){state.mt[k]=now;delete state.del[k];any=true;if(!k.startsWith("marks"+SYNC_SEP))edits=true;}
+    for(const k of syncBase.keys())if(!cur.has(k)){state.del[k]=now;delete state.mt[k];any=true;if(!k.startsWith("marks"+SYNC_SEP))edits=true;}
+  }
+  syncBase=cur;return {any,edits};}
+// merge two ledger copies; `tie` says which side wins when neither version carries an edit time
+// (copies saved before record-level sync existed). Returns the merged ledger plus the records
+// where both copies differed with no edit times to decide between them.
+function mergeLedgers(A,B,tie){
+  A=A||{};B=B||{};const amt=A.mt||{},bmt=B.mt||{},del={},mt={},legacy=[];
+  const yr=Date.now()-400*864e5;   // forget tombstones after ~13 months
+  for(const d of [A.del||{},B.del||{}])for(const k in d)if(num(d[k],0)>yr)del[k]=Math.max(del[k]||0,num(d[k],0));
+  const pick=(k,a,b)=>{   // a/b: record value or undefined → [value,editTime] or null when deleted
+    const at=num(amt[k],0),bt=num(bmt[k],0);let v,t;
+    if(a!==undefined&&b!==undefined){
+      if(JSON.stringify(a)===JSON.stringify(b)){v=a;t=Math.max(at,bt);}
+      else if(at>bt){v=a;t=at;}else if(bt>at){v=b;t=bt;}
+      else{v=tie==="B"?b:a;t=at;legacy.push({k,kept:v,lost:tie==="B"?a:b});}
+    }else if(a!==undefined){v=a;t=at;}else{v=b;t=bt;}
+    if(del[k]&&del[k]>=t)return null;
+    if(t)mt[k]=t;return [v,t];};
+  const out={};
+  for(const c of SYNC_ARR){
+    const la=Array.isArray(A[c])?A[c]:[],lb=Array.isArray(B[c])?B[c]:[];
+    const mb=new Map(lb.filter(r=>r&&r.id!=null).map(r=>[String(r.id),r])),seen=new Set(),res=[];
+    for(const r of la){if(!r||r.id==null){res.push(r);continue;}const id=String(r.id);seen.add(id);const p=pick(c+SYNC_SEP+id,r,mb.get(id));if(p)res.push(p[0]);}
+    for(const r of lb){if(!r||r.id==null){if(!res.some(x=>JSON.stringify(x)===JSON.stringify(r)))res.push(r);continue;}
+      const id=String(r.id);if(seen.has(id))continue;seen.add(id);const p=pick(c+SYNC_SEP+id,undefined,r);if(p)res.push(p[0]);}
+    out[c]=res;}
+  for(const c of SYNC_MAP){
+    const ma=(A[c]&&typeof A[c]==="object")?A[c]:{},mb=(B[c]&&typeof B[c]==="object")?B[c]:{},res={};
+    for(const k of new Set([...Object.keys(ma),...Object.keys(mb)])){const p=pick(c+SYNC_SEP+k,ma[k],mb[k]);if(p)res[k]=p[0];}
+    out[c]=res;}
+  out.seq=Math.max(num(A.seq,0),num(B.seq,0));out.updatedAt=Math.max(num(A.updatedAt,0),num(B.updatedAt,0));
+  out.mt=mt;out.del=del;
+  return {data:out,legacy};}
+// stable fingerprint of a ledger's content, to tell whether a merge changed anything
+function ledgerSig(o){const e=x=>JSON.stringify(Object.keys(x||{}).sort().map(k=>[k,x[k]]));
+  return JSON.stringify([...syncIndex(o).entries()].sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0))+e(o&&o.mt)+e(o&&o.del)+"|"+num(o&&o.seq,0);}
+function ledgerCounts(o){o=o||{};const n=x=>Array.isArray(x)?x.length:0,m=x=>x&&typeof x==="object"?Object.keys(x).length:0;
+  return `${n(o.trades)} buy-side · ${n(o.spreads)} sell-side · ${m(o.journal)} journal · ${n(o.propfirm)} prop`;}
+/* ---- automatic local backups: a copy is kept before every sync that changes data ---- */
+const BACKUP_KEY="ledgerBackups",BACKUP_MAX=20;
+async function backupSnapshot(label,obj){try{
+  const list=(await idbGet(BACKUP_KEY))||[];
+  list.unshift({at:Date.now(),label,data:typeof obj==="string"?obj:JSON.stringify(obj)});
+  await idbSet(BACKUP_KEY,list.slice(0,BACKUP_MAX));}catch(e){console.warn("backup failed",e);}}
+async function listBackups(){try{return (await idbGet(BACKUP_KEY))||[];}catch(e){return [];}}
 /* ---- demo data (preview only; never persisted) ---- */
 function buildDemoState(){
   const dAgo=n=>{const d=new Date();d.setDate(d.getDate()-n);return d.toISOString().slice(0,10);};
@@ -1332,15 +1412,18 @@ async function driveApi(url,opts={}){
   if(r.status===401){driveExpired();throw new Error("drive session expired");}
   return r;
 }
-async function driveFindFile(){
-  // drive.file only returns files this app created/opened, so a name match is safe.
+// drive.file only returns files this app created/opened, so a name match is safe. Two devices
+// can each have created a copy before either saw the other's, so list them all, newest first.
+async function driveListFiles(){
   const q=encodeURIComponent(`name='${GDRIVE_FILENAME}' and trashed=false`);
-  const r=await driveApi(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,modifiedTime)`);
-  const j=await r.json();
-  gFileId=(j.files&&j.files.length)?j.files[0].id:null;
-  return gFileId?j.files[0]:null;
-}
-async function driveDownload(){if(!gFileId)return null;const r=await driveApi(`https://www.googleapis.com/drive/v3/files/${gFileId}?alt=media`);if(!r.ok)return null;try{return await r.json();}catch(e){return null;}}
+  const r=await driveApi(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime%20desc&fields=files(id,modifiedTime)`);
+  if(!r.ok)throw new Error("Drive list failed ("+r.status+")");
+  const j=await r.json();return Array.isArray(j.files)?j.files:[];}
+async function driveFindFile(){const f=await driveListFiles();gFileId=f.length?f[0].id:null;return f[0]||null;}
+async function driveDownloadId(id){const r=await driveApi(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`);
+  if(!r.ok)throw new Error("Drive download failed ("+r.status+")");
+  try{return await r.json();}catch(e){return null;}}
+async function driveDownload(){if(!gFileId)return null;return driveDownloadId(gFileId);}
 async function driveCreate(){
   const body=serialize();
   const meta={name:GDRIVE_FILENAME,mimeType:"application/json"};  // created in the user's My Drive (visible)
@@ -1360,31 +1443,112 @@ async function driveUpload(){
   }
   return driveCreate();
 }
+let drivePending=false;
+// Download → merge record by record → write back only what changed. Every save goes through
+// here, so a device holding an older copy can never overwrite edits made elsewhere.
 async function driveSync(){
-  if(!driveConnected||driveBusy||demoMode)return;
-  driveBusy=true;updateDriveUI("syncing…");
-  try{
-    await driveFindFile();
-    const remote=await driveDownload();
-    const localT=num(state.updatedAt,0),remoteT=remote?num(remote.updatedAt,0):-1;
-    if(remote&&remoteT>localT){
-      applyingRemote=true;applyParsed(remote);applyingRemote=false;
-      try{localStorage.setItem(LS_KEY,serialize());}catch(e){}
-      refreshAll();toast("Pulled latest from Google Drive");
-    }else if(!remote||localT>remoteT){await driveUpload();}
+  if(!driveConnected||demoMode)return;
+  if(driveBusy){drivePending=true;return;}
+  driveBusy=true;drivePending=false;updateDriveUI("syncing…");
+  try{for(let attempt=0;attempt<4;attempt++){
+    const files=await driveListFiles();
+    gFileId=files.length?files[0].id:null;
+    const seenAt=files.length?files[0].modifiedTime:"";
+    let remote=null;
+    for(const f of files){const d=await driveDownloadId(f.id);   // fold in any duplicate copies too
+      if(d&&Array.isArray(d.trades))remote=remote?mergeLedgers(remote,d,"A").data:d;}
+    if(!remote){await driveUpload();}
+    else{
+      stampChanges();   // make sure edits from this instant are stamped before merging
+      const local=JSON.parse(serialize());
+      // copies saved before record-level sync have no per-record edit times; for those,
+      // the copy that was edited more recently wins, and the other is kept as a backup
+      const tie=num(remote.updatedAt,0)>num(local.updatedAt,0)?"B":"A";
+      const {data,legacy}=mergeLedgers(local,remote,tie);
+      const sig=ledgerSig(data);
+      if(ledgerSig(local)!==sig){
+        await backupSnapshot("This device, before syncing with Drive",local);
+        applyingRemote=true;applyParsed(data);stampChanges();applyingRemote=false;
+        try{localStorage.setItem(LS_KEY,serialize());}catch(e){}
+        refreshAll();toast("Synced changes from Google Drive");}
+      if(ledgerSig(remote)!==sig||files.length>1){
+        // another device may have saved while we were merging: if so, merge again rather than overwrite
+        const now=await driveListFiles();
+        if(now.length&&now[0].id===gFileId&&now[0].modifiedTime!==seenAt&&attempt<3)continue;
+        await backupSnapshot("Google Drive copy, before this device's changes were merged in",remote);
+        await driveUpload();}
+      if(legacy.length){
+        const lostLocal=legacy.filter(x=>x.lost!==undefined).length;
+        toast(`${lostLocal} record${lostLocal===1?"":"s"} differed between this device and Drive. The more recently edited copy was kept and the other was backed up.`,true,
+          {sticky:true,action:{label:"Review",onClick:openRecover}});}
+    }
+    break;}
     driveLastSync=Date.now();updateDriveUI();
-  }catch(e){if(driveConnected)updateDriveUI("sync error — try again");}
+  }catch(e){console.warn("Drive sync failed",e);if(driveConnected)updateDriveUI("sync error — try again");}
   finally{driveBusy=false;}
+  if(drivePending&&driveConnected)return driveSync();   // an edit landed mid-sync: run again now
 }
 function scheduleDriveWrite(){
   if(!driveConnected||demoMode)return;clearTimeout(driveWriteTimer);
-  driveWriteTimer=setTimeout(async()=>{
-    if(driveBusy)return;driveBusy=true;updateDriveUI("saving…");
-    try{if(gFileId===null)await driveFindFile();await driveUpload();driveLastSync=Date.now();}
-    catch(e){if(driveConnected)updateDriveUI("sync error — try again");}
-    finally{driveBusy=false;if(driveConnected)updateDriveUI();}
-  },1500);
+  driveWriteTimer=setTimeout(()=>{driveSync();},1500);   // busy? driveSync queues another pass
 }
+/* ---- recovery: Drive's own version history + this device's automatic backups ---- */
+async function driveRevisions(){
+  if(!gFileId)await driveFindFile();if(!gFileId)return [];
+  const r=await driveApi(`https://www.googleapis.com/drive/v3/files/${gFileId}/revisions?pageSize=200&fields=revisions(id,modifiedTime,size)`);
+  if(!r.ok)throw new Error("revisions "+r.status);
+  const j=await r.json();return (j.revisions||[]).slice().reverse();}
+async function driveRevisionData(rid){const r=await driveApi(`https://www.googleapis.com/drive/v3/files/${gFileId}/revisions/${rid}?alt=media`);
+  if(!r.ok)throw new Error("revision "+r.status);return await r.json();}
+// fold a saved copy back in: anything it has that the ledger lacks is restored, and where both
+// have a record its version wins unless the ledger's was edited later. Nothing is deleted.
+function previewMergeIn(snap){
+  const cur=JSON.parse(serialize());
+  const snapNoDel=Object.assign({},snap,{del:{}});
+  const curNoDel=Object.assign({},cur,{del:{}});   // a restore brings back deleted records too
+  const {data}=mergeLedgers(curNoDel,snapNoDel,"B");
+  const before=syncIndex(cur),after=syncIndex(data);let added=0,changed=0;
+  for(const [k,v] of after){if(!before.has(k))added++;else if(before.get(k)!==v)changed++;}
+  return {data,added,changed};}
+function applyMergeIn(data){
+  // keep tombstones only for records that are still absent, then save so every restored
+  // record is stamped as a fresh edit and wins on the other devices too
+  const keep=syncIndex(data),del={};for(const k in (state.del||{}))if(!keep.has(k))del[k]=state.del[k];
+  data.del=del;data.mt=Object.assign({},state.mt||{},data.mt||{});
+  backupSnapshot("This device, before restoring a saved copy",JSON.parse(serialize()));
+  const base=syncBase;applyingRemote=true;applyParsed(data);applyingRemote=false;syncBase=base;
+  save();refreshAll();}
+let recoverItems=[];
+async function openRecover(){
+  const m=$("#recoverModal");if(!m)return;m.classList.add("show");
+  const box=$("#recoverList");box.innerHTML=`<p class="mut">Loading saved copies…</p>`;
+  const items=[];
+  if(driveConnected&&tokenValid()){
+    try{for(const r of await driveRevisions())items.push({src:"Google Drive version",at:Date.parse(r.modifiedTime),rid:r.id});}
+    catch(e){items.push({err:"Couldn't read Drive's version history ("+(e.message||e)+")."});}
+  }else items.push({err:"Connect Google Drive to see its version history. This device's backups are below."});
+  for(const b of await listBackups())items.push({src:b.label,at:b.at,local:b.data});
+  recoverItems=items;
+  box.innerHTML=items.map((it,i)=>it.err?`<p class="note">${esc(it.err)}</p>`:
+    `<div class="rcv-row"><div><b>${new Date(it.at).toLocaleString()}</b><div class="mut">${esc(it.src)}</div><div class="mut rcv-c" id="rcvc${i}">${it.local?esc(ledgerCounts(JSON.parse(it.local))):""}</div></div>
+      <div class="rcv-acts"><button class="btn ghost sm" data-rcv="${i}" data-act="merge">Merge in</button><button class="iconbtn" data-rcv="${i}" data-act="dl">download</button></div></div>`).join("")
+    ||`<p class="mut">No saved copies yet.</p>`;
+  box.querySelectorAll("[data-rcv]").forEach(b=>b.onclick=()=>recoverAct(+b.dataset.rcv,b.dataset.act,b));
+  // fill in what each Drive version holds so the right one is easy to spot (newest 40)
+  let n=0;for(let i=0;i<items.length&&n<40;i++){const it=items[i];if(!it.rid)continue;n++;
+    const c=$("#rcvc"+i);if(c)c.textContent="loading…";
+    try{const d=await recoverData(it);if(!$("#recoverModal").classList.contains("show")||recoverItems!==items)return;if(c)c.textContent=ledgerCounts(d);}
+    catch(e){if(c)c.textContent="couldn't load";}}}
+async function recoverData(it){if(it.local)return JSON.parse(it.local);const d=await driveRevisionData(it.rid);it.local=JSON.stringify(d);return d;}
+async function recoverAct(i,act,btn){const it=recoverItems[i];if(!it)return;
+  try{btn.disabled=true;const d=await recoverData(it);const c=$("#rcvc"+i);if(c)c.textContent=ledgerCounts(d);
+    if(act==="dl"){download(`trading-ledger_${new Date(it.at).toISOString().slice(0,16).replace(/[:T]/g,"-")}.json`,JSON.stringify(d,null,2),"application/json");return;}
+    const pv=previewMergeIn(d);
+    if(!pv.added&&!pv.changed){toast("Nothing to restore — everything in that copy is already in your ledger");return;}
+    if(!confirm(`Merge the copy from ${new Date(it.at).toLocaleString()} into your ledger?\n\nIt will restore ${pv.added} missing record${pv.added===1?"":"s"} and bring back ${pv.changed} older version${pv.changed===1?"":"s"} of records you have. Nothing will be deleted, and your current ledger is backed up first.`))return;
+    applyMergeIn(pv.data);closeRecover();toast(`Restored ${pv.added} record${pv.added===1?"":"s"} and ${pv.changed} version${pv.changed===1?"":"s"} from ${new Date(it.at).toLocaleDateString()}`);
+  }catch(e){toast("Couldn't read that copy ("+(e.message||e)+")",true);}finally{btn.disabled=false;}}
+function closeRecover(){const m=$("#recoverModal");if(m)m.classList.remove("show");}
 // background sync only runs while a valid token is already in hand — never force a refresh (and its popup) while idle
 function startDriveAuto(){clearInterval(driveAutoTimer);driveAutoTimer=setInterval(()=>{if(!driveConnected||document.hidden)return;if(tokenValid())driveSync();else driveExpired();},120000);}
 /* Popup-free sign-in: send the whole tab to Google and come back here with the token in
@@ -3568,7 +3732,9 @@ function exportCSV(){
   download(`trading-ledger_trades_${today()}.csv`,h+"\n"+lines.join("\n")+"\n","text/csv");toast("Trades exported");
 }
 function importJSON(text){try{const p=JSON.parse(text);
+  const base=syncBase;   // a restore is an edit: diff against the ledger it replaces so it syncs
   if(!applyParsed(p))throw 0;
+  syncBase=base;
   save();refreshAll();toast(`Restored ${state.trades.length} trades · ${state.spreads.length} sell-side`);}
   catch(e){toast("Invalid backup file",true);}}
 
@@ -4667,6 +4833,9 @@ function init(){
   $("#fsDisconnect").onclick=disconnectFile;
   restoreFile();
   $("#driveConnect").onclick=driveConnect;
+  $("#recoverOpen").onclick=openRecover;$("#recoverClose").onclick=closeRecover;
+  $("#recoverModal").onclick=e=>{if(e.target.id==="recoverModal")closeRecover();};
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#recoverModal").classList.contains("show"))closeRecover();});
   $("#savedTxt").onclick=()=>{if(!driveConnected&&driveNeedsReconnect)driveConnect();};
   $("#driveSyncNow").onclick=driveSync;
   $("#driveDisconnect").onclick=driveDisconnect;
