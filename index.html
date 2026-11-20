@@ -421,6 +421,8 @@ tr.open-row td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
 .dup-grp{border:1px solid var(--line);border-radius:11px;padding:10px 12px;margin-bottom:10px;background:var(--bg2)}
 .dup-h{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:700}
 .dup-what{font-family:var(--mono);font-size:12.5px;margin:4px 0 2px;color:var(--txt)}
+.dup-bar{display:flex;align-items:center;gap:12px;margin:0 0 10px}
+.dup-bar .mut{font-size:12px}
 .dup-why{font-size:11px;color:var(--muted);margin-bottom:6px}
 .dup-row{display:flex;gap:10px;align-items:flex-start;padding:6px 0;font-size:12.5px;cursor:pointer}
 .dup-row input{margin-top:2px}
@@ -1058,6 +1060,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dupTitle" style="max-width:640px">
     <h2 id="dupTitle">Duplicate entries</h2>
     <p class="lead">Each group is the same entry saved more than once at different times, in the same account. The line under each lists what matched, and each copy shows when it was entered. Untick anything that is a genuine separate trade. Your choices sync to all your devices and you won't be asked about these entries again. A backup is saved before anything is removed.</p>
+    <div class="dup-bar" id="dupBar"><button class="btn ghost sm" id="dupToggleAll">Deselect all</button><span class="mut" id="dupCount"></span></div>
     <div id="dupList"></div>
     <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px"><button class="btn ghost" id="dupClose">Cancel</button><button class="btn" id="dupRemove">Remove</button></div>
   </div>
@@ -1621,13 +1624,20 @@ let dupGroups=[];
 function openDuplicates(){
   dupGroups=findDuplicates();const m=$("#dupModal"),box=$("#dupList");m.classList.add("show");
   const names={trades:"Buy-side",spreads:"Sell-side",propfirm:"Prop firm"};
-  if(!dupGroups.length){box.innerHTML=`<p class="mut">No duplicate entries to review. Entries you've already reviewed aren't shown again.</p>`;$("#dupRemove").style.display="none";return;}
+  if(!dupGroups.length){box.innerHTML=`<p class="mut">No duplicate entries to review. Entries you've already reviewed aren't shown again.</p>`;$("#dupRemove").style.display="none";$("#dupBar").style.display="none";return;}
+  $("#dupBar").style.display="";
   $("#dupRemove").style.display="";
   box.innerHTML=dupGroups.map((g,gi)=>`<div class="dup-grp"><div class="dup-h">${names[g.c]} · ${g.recs.length} copies</div><div class="dup-what">${esc(dupLabel(g.c,g.recs[0]))}${(g.recs[0].account||"").trim()?" · "+esc(g.recs[0].account.trim()):""}</div><div class="dup-why">Same ${esc(g.matched.join(", "))}</div>`+
     g.recs.map(r=>`<label class="dup-row"><input type="checkbox" data-dg="${gi}" data-did="${attr(r.id)}"${r.id===g.keep?"":" checked"}>
       <span><b>${r.id===g.keep?"Keep":"Remove"}</b> <span class="mut">${esc(dupDetail(g.c,r))}</span></span></label>`).join("")+`</div>`).join("");
   const sync=()=>{let n=0;box.querySelectorAll("input[data-dg]").forEach(cb=>{cb.parentElement.querySelector("b").textContent=cb.checked?"Remove":"Keep";if(cb.checked)n++;});
-    $("#dupRemove").textContent=n?`Remove ${n} & keep the rest`:"Keep all as separate trades";$("#dupRemove").disabled=false;};
+    $("#dupRemove").textContent=n?`Remove ${n} & keep the rest`:"Keep all as separate trades";$("#dupRemove").disabled=false;
+    const max=dupGroups.reduce((a,g)=>a+g.recs.length-1,0);
+    $("#dupCount").textContent=`${n} of ${max} extra cop${max===1?"y":"ies"} selected`;
+    $("#dupToggleAll").textContent=n?"Deselect all":"Select all";};
+  // select all = every copy except the suggested keeper in each group (a group is never emptied)
+  $("#dupToggleAll").onclick=()=>{const any=!!box.querySelector("input[data-dg]:checked");
+    dupGroups.forEach((g,gi)=>box.querySelectorAll(`input[data-dg="${gi}"]`).forEach(cb=>{cb.checked=!any&&cb.dataset.did!==String(g.keep);}));sync();};
   box.querySelectorAll("input[data-dg]").forEach(cb=>cb.onchange=()=>{
     // never let a whole group be removed
     const g=[...box.querySelectorAll(`input[data-dg="${cb.dataset.dg}"]`)];if(g.every(x=>x.checked)){cb.checked=false;toast("Keep at least one copy of each entry");}sync();});
