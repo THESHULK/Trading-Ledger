@@ -314,6 +314,7 @@ svg.chart{width:100%;display:block;overflow:visible}
 .gridline{stroke:var(--line);stroke-width:1}
 .crosshair{stroke:var(--faint);stroke-width:1;stroke-dasharray:3 3;pointer-events:none}
 .axislbl{fill:var(--faint);font-family:var(--mono);font-size:10px}
+@media(max-width:720px){.axislbl{font-size:11px}.sd-chart .sd-axis{font-size:10px}}
 .tip{position:absolute;pointer-events:none;background:#04060a;border:1px solid var(--line2);
   border-radius:7px;padding:7px 10px;font-family:var(--mono);font-size:11px;
   opacity:0;transition:opacity .1s;white-space:nowrap;z-index:5;box-shadow:0 6px 20px rgba(0,0,0,.5)}
@@ -2006,9 +2007,16 @@ function renderDash(){
 }
 const fmtSignedColored=n=>`${n>=0?"+":"−"}$${Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 
+/* Charts are drawn in their real on-screen width (1 unit = 1 css px) instead of a fixed desktop
+   width that the browser then shrinks — on a phone that shrink made every label ~5px tall.
+   Desktop is unchanged: the width is capped at the chart's original design width. */
+function chartBox(svg,def,H){const w=svg?(svg.clientWidth||(svg.parentElement&&svg.parentElement.clientWidth)||0):0;
+  const W=w>0?Math.round(Math.min(def,Math.max(260,w))):def;
+  if(svg)svg.setAttribute("viewBox",`0 0 ${W} ${H}`);return W;}
+
 /* ---- line chart: cumulative realized over time ---- */
 function drawLine(realized){
-  const svg=$("#lineChart");const W=720,H=260,pad={l:58,r:14,t:14,b:28};
+  const svg=$("#lineChart");const H=260,W=chartBox(svg,720,H),pad={l:58,r:14,t:14,b:28};
   const evs=realized.slice().sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
   if(evs.length===0){svg.innerHTML=`<text x="${W/2}" y="${H/2}" text-anchor="middle" class="axislbl" style="font-size:13px">no closed trades in range</text>`;$("#cumHint").textContent="";return;}
   let cum=0;const pts=[];const byDate={};
@@ -2070,7 +2078,7 @@ function shortMoney(v){const a=Math.abs(v);const s=v<0?"-":"";
 
 /* ---- by instrument ---- */
 function drawInstrument(realized,pos){
-  const svg=$("#instChart");const W=360,H=260,pad={l:14,r:14,t:18,b:46};
+  const svg=$("#instChart");const H=260,W=chartBox(svg,360,H),pad={l:14,r:14,t:18,b:46};
   const types=["stock","option","future","spread","propfirm"];const labels={stock:"Stocks",option:"Options",future:"Futures",spread:"Sell-Side",propfirm:"Prop Firm"};
   const colors={stock:"var(--blue)",option:"var(--amber)",future:"#d59bff",spread:"#ff9bd0",propfirm:"#6fe0c2"};
   const data=types.map(ty=>{
@@ -2107,7 +2115,7 @@ function drawInstrument(realized,pos){
 /* ---- by ticker ---- */
 let tickerQ="";
 function drawByTicker(realized,pos){
-  const svg=$("#barChart");const W=720,H=280,pad={l:70,r:20,t:10,b:24};
+  const svg=$("#barChart");const H=280,W=chartBox(svg,720,H),pad={l:70,r:20,t:10,b:24};
   const map={},detail={};
   const addD=(sym,inst,val,unreal)=>{const d=detail[sym]||(detail[sym]={realInst:{},unrealInst:{},real:0,unreal:0});
     if(unreal){d.unrealInst[inst]=(d.unrealInst[inst]||0)+val;d.unreal+=val;}else{d.realInst[inst]=(d.realInst[inst]||0)+val;d.real+=val;}};
@@ -2125,7 +2133,7 @@ function drawByTicker(realized,pos){
   const bh=Math.min(28,(H-pad.t-pad.b)/rows.length-6);
   const step=(H-pad.t-pad.b)/rows.length;
   let g=`<line x1="${zero}" y1="${pad.t}" x2="${zero}" y2="${H-pad.b}" stroke="var(--line2)"/>`;
-  const lblW=60; // reserve space at each end so the value label never bleeds past the chart edge
+  const lblW=Math.min(60,innerW*0.18); // reserve space at each end so the value label never bleeds past the chart edge
   rows.forEach((r,i)=>{const y=pad.t+i*step+(step-bh)/2;
     const len=(Math.abs(r.v)/maxA)*Math.max(10,innerW/2-lblW);
     const x=r.v>=0?zero:zero-len;
@@ -2169,7 +2177,7 @@ function chartEmpty(svg,msg){const vb=(svg.getAttribute("viewBox")||"0 0 720 260
 
 /* ---- equity curve + drawdown ---- */
 function drawEquity(events){
-  const svg=$("#eqChart");const W=720,H=260,pad={l:58,r:14,t:12,b:30};
+  const svg=$("#eqChart");const H=260,W=chartBox(svg,720,H),pad={l:58,r:14,t:12,b:30};
   const evs=events.slice().sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
   if(evs.length===0){chartEmpty(svg,"no closed trades in range");$("#ddHint").textContent="";return;}
   let cum=0;const byDate={};for(const e of evs){cum+=e.pnl;byDate[e.date]=cum;}
@@ -2178,7 +2186,7 @@ function drawEquity(events){
   let peak=-Infinity;const dd=series.map(s=>{peak=Math.max(peak,s.v);return s.v-peak;});
   const maxDD=Math.min(0,...dd);
   $("#ddHint").innerHTML=`max DD <b class="neg">${shortMoney(maxDD)}</b>`;
-  const eqTop=pad.t,eqH=128,ddTop=eqTop+eqH+14,ddH=(H-pad.b)-ddTop;
+  const eqTop=pad.t,eqH=122,ddTop=eqTop+eqH+24,ddH=(H-pad.b)-ddTop;   // gap keeps the two axes' labels apart
   const ys=series.map(s=>s.v),minY=Math.min(0,...ys),maxY=Math.max(0,...ys),spanY=(maxY-minY)||1;
   const ddSpan=(-maxDD)||1;
   const n=series.length;
@@ -2227,7 +2235,7 @@ function drawEquity(events){
 
 /* ---- win rate donut + key stats ---- */
 function drawWinStats(realized){
-  const svg=$("#winChart");const W=360,H=260;
+  const svg=$("#winChart");const H=260,W=chartBox(svg,360,H);
   const wins=realized.filter(r=>r.pnl>0),losses=realized.filter(r=>r.pnl<0),scratch=realized.filter(r=>r.pnl===0);
   const n=realized.length;
   if(!n){chartEmpty(svg,"no closed trades in range");$("#winStats").innerHTML="";return;}
@@ -2237,7 +2245,7 @@ function drawWinStats(realized){
   const expc=realized.reduce((s,r)=>s+r.pnl,0)/n;
   const avgW=wins.length?grossW/wins.length:0,avgL=losses.length?-grossL/losses.length:0;
   const best=Math.max(0,...realized.map(r=>r.pnl)),worst=Math.min(0,...realized.map(r=>r.pnl));
-  const cx=180,cy=118,r=78,th=26,C=2*Math.PI*r;
+  const cx=W/2,cy=118,r=78,th=26,C=2*Math.PI*r;
   const seg=(frac,off,color)=>frac<=0?"":`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${th}" stroke-dasharray="${(frac*C).toFixed(2)} ${C.toFixed(2)}" stroke-dashoffset="${(-off*C).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
   let g="",off=0;
   g+=seg(wins.length/n,off,"var(--green)");off+=wins.length/n;
@@ -2261,7 +2269,7 @@ function drawWinStats(realized){
 
 /* ---- monthly P&L bars ---- */
 function drawMonthly(events){
-  const svg=$("#monthChart");const W=720,H=260,pad={l:58,r:14,t:14,b:34};
+  const svg=$("#monthChart");const H=260,W=chartBox(svg,720,H),pad={l:58,r:14,t:14,b:34};
   const map={};for(const e of events){const m=String(e.date).slice(0,7);map[m]=(map[m]||0)+e.pnl;}
   let keys=Object.keys(map).sort();
   if(!keys.length){chartEmpty(svg,"no closed trades in range");return;}
@@ -2276,7 +2284,7 @@ function drawMonthly(events){
   for(let i=0;i<=2;i++){const v=maxA-(maxA*2)*i/2,y=zero-half*(v/maxA);
     g+=`<line class="gridline" x1="${pad.l}" y1="${y.toFixed(1)}" x2="${W-pad.r}" y2="${y.toFixed(1)}"/>`;
     g+=`<text class="axislbl" x="${pad.l-8}" y="${(y+3).toFixed(1)}" text-anchor="end">${shortMoney(v)}</text>`;}
-  const bw=(W-pad.l-pad.r)/months.length,every=Math.ceil(months.length/12);
+  const bw=(W-pad.l-pad.r)/months.length,every=Math.ceil(months.length/Math.max(3,Math.min(12,Math.floor((W-pad.l-pad.r)/42))));
   months.forEach((m,i)=>{const v=map[m]||0,h=(Math.abs(v)/maxA)*half;
     const x=pad.l+i*bw+bw*0.18,w=bw*0.64,y=v>=0?zero-h:zero;
     g+=`<rect class="mbar" x="${pad.l+i*bw}" y="${pad.t}" width="${bw}" height="${H-pad.t-pad.b}" fill="transparent" data-m="${m}" data-v="${v}" style="cursor:pointer"/>`;
@@ -2360,7 +2368,7 @@ function drawCalendar(events,opens){
 
 /* ---- P&L distribution histogram ---- */
 function drawHistogram(realized){
-  const svg=$("#histChart");const W=720,H=260,pad={l:50,r:14,t:14,b:42};
+  const svg=$("#histChart");const H=260,W=chartBox(svg,720,H),pad={l:50,r:14,t:14,b:42};
   if(!realized.length){chartEmpty(svg,"no closed trades in range");$("#histHint").textContent="per closed trade";return;}
   const vals=realized.map(r=>r.pnl);
   const maxAbs=Math.max(1,...vals.map(Math.abs));
@@ -2384,7 +2392,7 @@ function drawHistogram(realized){
     g+=`<rect class="hbar" x="${(x+1).toFixed(1)}" y="${Y(b.c).toFixed(1)}" width="${Math.max(0,bw-2).toFixed(1)}" height="${Math.max(0,h).toFixed(1)}" fill="${col}" opacity="${b.c?0.85:0}" data-lo="${b.lo}" data-hi="${b.hi}" data-c="${b.c}" style="cursor:pointer"/>`;});
   // zero divider + a few x labels
   g+=`<line x1="${X(0).toFixed(1)}" y1="${pad.t}" x2="${X(0).toFixed(1)}" y2="${pad.t+innerH}" stroke="var(--line2)"/>`;
-  const lblEvery=Math.ceil(bins.length/8);
+  const lblEvery=Math.ceil(bins.length/Math.max(3,Math.min(8,Math.floor(innerW/62))));
   bins.forEach((b,i)=>{if(i%lblEvery===0)g+=`<text class="axislbl" x="${X(b.lo).toFixed(1)}" y="${H-22}" text-anchor="middle">${shortMoney(b.lo)}</text>`;});
   g+=`<text class="axislbl" x="${X(0).toFixed(1)}" y="${H-8}" text-anchor="middle" style="fill:var(--faint)">trade P&L →</text>`;
   svg.innerHTML=g;
@@ -2403,7 +2411,7 @@ function drawHistogram(realized){
 
 /* ---- P&L by day of week ---- */
 function drawDayOfWeek(events){
-  const svg=$("#dowChart");const W=360,H=260,pad={l:14,r:14,t:18,b:42};
+  const svg=$("#dowChart");const H=260,W=chartBox(svg,360,H),pad={l:14,r:14,t:18,b:42};
   if(!events.length){chartEmpty(svg,"no closed trades in range");return;}
   const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
   const agg=DOW.map(d=>({d,v:0,n:0}));
@@ -4011,12 +4019,13 @@ function sellDashMetrics(sps){
 // monthly bar chart; signed=true draws +/- from a centre line, else all bars up from the baseline
 function sdBarChart(byMo,empty,numeric){
   const months=sdFillMonths(Object.keys(byMo)).slice(-13);
-  const W=560,H=150,pad={l:6,r:6,t:10,b:20};
+  const vw=window.innerWidth||1024,W=vw<=720?Math.round(Math.max(260,Math.min(560,vw-72))):560,H=150,pad={l:6,r:6,t:10,b:20};
   if(!months.length)return `<svg viewBox="0 0 ${W} ${H}" class="sd-chart"><text x="${W/2}" y="${H/2}" text-anchor="middle" class="sd-axis">${empty||"no data"}</text></svg>`;
   const signed=months.some(m=>(byMo[m]||0)<0); // centre the axis only when some months are negative
   const maxA=Math.max(1,...months.map(m=>Math.abs(byMo[m]||0)));
   const bw=(W-pad.l-pad.r)/months.length;let g="";
-  const lbl=(m,i)=>{if(months.length>13)return "";const mm=m.split("-")[1];return `<text class="sd-axis" x="${(pad.l+i*bw+bw/2).toFixed(1)}" y="${H-7}" text-anchor="middle">${MON[+mm-1]}</text>`;};
+  const lblEvery=bw<26?2:1;   // narrow phone: label every other month so they don't collide
+  const lbl=(m,i)=>{if(months.length>13||i%lblEvery!==(months.length-1)%lblEvery)return "";const mm=m.split("-")[1];return `<text class="sd-axis" x="${(pad.l+i*bw+bw/2).toFixed(1)}" y="${H-7}" text-anchor="middle">${MON[+mm-1]}</text>`;};
   const hit=(m,i)=>`<rect class="sdbar" x="${(pad.l+i*bw).toFixed(1)}" y="${pad.t}" width="${bw.toFixed(1)}" height="${(H-pad.t-pad.b).toFixed(1)}" fill="transparent" data-m="${m}" data-v="${byMo[m]||0}"${numeric?' data-n="1"':""} style="cursor:pointer"/>`;
   if(signed){const zero=pad.t+(H-pad.t-pad.b)/2,half=(H-pad.t-pad.b)/2-4;
     g+=`<line x1="${pad.l}" y1="${zero}" x2="${W-pad.r}" y2="${zero}" stroke="var(--line2)"/>`;
@@ -4361,6 +4370,7 @@ function setSecOpen(panel,open,persist){
   h3.setAttribute("aria-expanded",open?"true":"false");
   // wide tables can't be measured while hidden — refit any that just became visible
   if(open)["#tradeTable","#propTradeTable"].forEach(t=>{if(panel.querySelector(t))fitWideTable(t);});
+  if(persist&&open&&panel.querySelector("svg.chart")&&$("#view-dash").classList.contains("on"))renderDash();
   if(persist){const k=panel.dataset.sec;if(open)delete collapsedSecs[k];else collapsedSecs[k]=1;saveCollapsed();}
 }
 function initCollapsible(){
@@ -4970,7 +4980,9 @@ function init(){
   setTimeout(()=>{if(!driveConnected)checkDuplicatesAfterSync();else dupCheckAfterFirstSync=true;},4000);
   $("#clearAll").onclick=()=>{if(confirm("Delete ALL trades and marks? This cannot be undone."))
     {state={trades:[],marks:{},spreads:[],propfirm:[],seq:0};save();refreshAll();toast("All data deleted");}};
-  window.addEventListener("resize",()=>{if($("#view-dash").classList.contains("on"))renderDash();
+  let lastW=window.innerWidth;
+  window.addEventListener("resize",()=>{if(window.innerWidth===lastW)return;lastW=window.innerWidth;
+    if($("#view-dash").classList.contains("on"))renderDash();
     ["#tradeTable","#spreadTable","#propTradeTable"].forEach(fitWideTable);});
   switchView("dash");
   fetchStockPrices(false);
